@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 // ═══════════════════════════════════════════════════════════════════════
 // DATA — Pre-loaded from AT Dev Plan v5
@@ -173,38 +173,57 @@ const USERS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// API CONFIG — Replace with your Google Apps Script deployment URL
+// API CONFIG — Set VITE_SHEETS_API_URL in .env.local or Vercel Environment Variables
 // ═══════════════════════════════════════════════════════════════════════
-const API_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_SHEETS_API_URL)
-  || "YOUR_APPS_SCRIPT_URL_HERE";
+let API_URL = "";
+try { API_URL = import.meta.env.VITE_SHEETS_API_URL || ""; } catch(e) {}
+
+const API_ENABLED = !!API_URL;
+
+if (API_ENABLED) { console.log("AT Tracker API connected"); }
+else { console.log("AT Tracker API: NOT CONFIGURED — set VITE_SHEETS_API_URL in .env.local or Vercel"); }
 
 async function apiGet(sheetName) {
+  if (!API_ENABLED) return [];
   try {
-    const res = await fetch(`${API_URL}?action=getAll&sheet=${sheetName}`);
+    const url = `${API_URL}?action=getAll&sheet=${encodeURIComponent(sheetName)}`;
+    const res = await fetch(url, { method: "GET", redirect: "follow" });
     const data = await res.json();
     return data.rows || [];
   } catch (e) { console.error("API GET error:", e); return []; }
 }
 
 async function apiCreate(sheetName, rowData) {
+  if (!API_ENABLED) return;
   try {
-    await fetch(`${API_URL}?action=create&sheet=${sheetName}`, {
-      method: "POST", body: JSON.stringify(rowData),
+    const url = `${API_URL}?action=create&sheet=${encodeURIComponent(sheetName)}`;
+    await fetch(url, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify(rowData),
     });
   } catch (e) { console.error("API CREATE error:", e); }
 }
 
 async function apiUpdate(sheetName, rowData) {
+  if (!API_ENABLED) return;
   try {
-    await fetch(`${API_URL}?action=update&sheet=${sheetName}`, {
-      method: "POST", body: JSON.stringify(rowData),
+    const url = `${API_URL}?action=update&sheet=${encodeURIComponent(sheetName)}`;
+    await fetch(url, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify(rowData),
     });
   } catch (e) { console.error("API UPDATE error:", e); }
 }
 
 async function apiDelete(sheetName, id) {
+  if (!API_ENABLED) return;
   try {
-    await fetch(`${API_URL}?action=delete&sheet=${sheetName}&id=${id}`);
+    const url = `${API_URL}?action=delete&sheet=${encodeURIComponent(sheetName)}&id=${encodeURIComponent(id)}`;
+    await fetch(url, { method: "GET", redirect: "follow" });
   } catch (e) { console.error("API DELETE error:", e); }
 }
 
@@ -257,7 +276,7 @@ export default function ATDevelopmentTracker() {
 
   // ── Load data from Google Sheets on mount ─────────────
   useEffect(() => {
-    if (API_URL === "YOUR_APPS_SCRIPT_URL_HERE") {
+    if (!API_ENABLED) {
       setDataLoaded(true);
       return;
     }
@@ -276,12 +295,18 @@ export default function ATDevelopmentTracker() {
 
         // Load Diary Entries
         const entryRows = await apiGet("DiaryEntries");
-        const parsedEntries = entryRows.filter(r => r.id).map(r => ({
-          ...r,
-          activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
-          attachments: r.attachments ? JSON.parse(r.attachments) : [],
-          comments: r.comments ? JSON.parse(r.comments) : [],
-        }));
+        const parsedEntries = entryRows.filter(r => r.id).map(r => {
+          let attachments = [];
+          let comments = [];
+          try { attachments = r.attachments ? JSON.parse(r.attachments) : []; } catch(e) {}
+          try { comments = r.comments ? JSON.parse(r.comments) : []; } catch(e) {}
+          return {
+            ...r,
+            activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
+            attachments,
+            comments,
+          };
+        });
         setEntries(parsedEntries);
 
         // Load Gate Status (for examiner scores)
@@ -610,60 +635,61 @@ export default function ATDevelopmentTracker() {
   };
 
   // ── Save baseline & gate scores to Sheets ─────────────
-  const saveGateToSheet = useCallback((gateId, baseScore, gateScore, note) => {
-    apiUpdate("GateStatus", {
-      gateId,
-      baselineMark: baseScore?.mark || "",
-      baselineChris: baseScore?.chris || "",
-      baselineGates: baseScore?.gates || "",
-      baselineMike: baseScore?.mike || "",
-      baselineNotes: note || "",
-      chrisScore: gateScore?.chris || "",
-      gatesScore: gateScore?.gates || "",
-      mikeScore: gateScore?.mike || "",
-    });
-  }, []);
+  const saveTimerRef = useRef({});
 
-  // Debounced save for baseline scores (fires 1s after last change)
-  const [saveTimer, setSaveTimer] = useState(null);
-  const debouncedSaveGate = useCallback((gateId) => {
-    if (saveTimer) clearTimeout(saveTimer);
-    setSaveTimer(setTimeout(() => {
-      saveGateToSheet(
-        gateId,
-        baselineScores[gateId],
-        gateScores[gateId],
-        baselineNotes[gateId]
-      );
-    }, 1000));
-  }, [saveTimer, baselineScores, gateScores, baselineNotes, saveGateToSheet]);
+  const saveGateToSheet = (gateId) => {
+    // Clear any pending save for this gate
+    if (saveTimerRef.current[gateId]) clearTimeout(saveTimerRef.current[gateId]);
+    // Debounce: save 1s after last change
+    saveTimerRef.current[gateId] = setTimeout(() => {
+      // Read latest state at save time via DOM-independent closures
+      setBaselineScores(bs => {
+        setGateScores(gs => {
+          setBaselineNotes(bn => {
+            apiUpdate("GateStatus", {
+              gateId,
+              baselineMark: bs[gateId]?.mark || "",
+              baselineChris: bs[gateId]?.chris || "",
+              baselineGates: bs[gateId]?.gates || "",
+              baselineMike: bs[gateId]?.mike || "",
+              baselineNotes: bn[gateId] || "",
+              chrisScore: gs[gateId]?.chris || "",
+              gatesScore: gs[gateId]?.gates || "",
+              mikeScore: gs[gateId]?.mike || "",
+            });
+            return bn; // don't change state
+          });
+          return gs;
+        });
+        return bs;
+      });
+    }, 1000);
+  };
 
   // Wrap baseline/gate score setters to trigger save
   const updateBaselineScore = (gateId, who, val) => {
-    setBaselineScores(prev => {
-      const next = { ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 } };
-      return next;
-    });
-    setTimeout(() => debouncedSaveGate(gateId), 0);
+    setBaselineScores(prev => ({
+      ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 }
+    }));
+    saveGateToSheet(gateId);
   };
 
   const updateBaselineNote = (gateId, val) => {
     setBaselineNotes(prev => ({ ...prev, [gateId]: val }));
-    setTimeout(() => debouncedSaveGate(gateId), 0);
+    saveGateToSheet(gateId);
   };
 
   const updateGateExaminerScore = (gateId, who, val) => {
-    setGateScores(prev => {
-      const next = { ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 } };
-      return next;
-    });
-    setTimeout(() => debouncedSaveGate(gateId), 0);
+    setGateScores(prev => ({
+      ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 }
+    }));
+    saveGateToSheet(gateId);
   };
 
   // Save comments back to sheet when they change
-  const saveEntryComments = useCallback((entryId, comments) => {
+  const saveEntryComments = (entryId, comments) => {
     apiUpdate("DiaryEntries", { id: entryId, comments: JSON.stringify(comments) });
-  }, []);
+  };
 
   // ── Gate selector for LO editing ─────────────────────
   const GatePicker = ({ selected, onChange }) => {
