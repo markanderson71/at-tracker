@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 
 // ═══════════════════════════════════════════════════════════════════════
 // DATA — Pre-loaded from AT Dev Plan v5
@@ -22,26 +22,30 @@ const GATES = {
     color: "#3088cc",
     prefix: "SK",
     gates: [
-      { id: "SK-G1", criterion: "Individual Fundamental (L3) — Pivot Slips" },
-      { id: "SK-G2", criterion: "Individual Fundamental (L3) — Hop Turns" },
-      { id: "SK-G3", criterion: "Individual Fundamental (L3) — White Pass Turn" },
-      { id: "SK-G4", criterion: "Individual Fundamental (L3) — Stem Christie" },
-      { id: "SK-G5", criterion: "Individual Fundamental (L3) — Short Radius Leapers" },
-      { id: "SK-G6", criterion: "Individual Fundamental (L3) — Outside Ski Turn" },
-      { id: "SK-G7", criterion: "Individual Fundamental (L3) — Javelin Turns" },
-      { id: "SK-G8", criterion: "Individual Fundamental (L3) — Reverse Javelin Turn" },
-      { id: "SK-G9", criterion: "Individual Fundamental (L3) — Falling Leaf with Edge Change" },
-      { id: "SK-G10", criterion: "Integrated Fundamental — Wedge Turn (Center Line L1)" },
-      { id: "SK-G11", criterion: "Integrated Fundamental — Wedge Christie Turn (Center Line L2)" },
-      { id: "SK-G12", criterion: "Integrated Fundamental — Basic Parallel Turn (Center Line L2)" },
-      { id: "SK-G13", criterion: "Integrated Fundamental — Dynamic Parallel Turn (Center Line L3)" },
-      { id: "SK-G14", criterion: "Performance Short Turns — groomed blue to black" },
-      { id: "SK-G15", criterion: "Performance Medium Turns — groomed blue" },
-      { id: "SK-G16", criterion: "Variable Conditions and Terrain (Black / double black)" },
-      { id: "SK-G17", criterion: "Short Turns in Bumps (Black)" },
-      { id: "SK-G18", criterion: "Large Turns in Bumps" },
-      { id: "SK-G19", criterion: "Express intent of tactical choices, desired outcome, fundamental focus and blending, and ability to adapt to varying conditions" },
-      { id: "SK-G20", criterion: "Professionalism & Self-Management" },
+      // ── Individual Fundamentals (L3) ──
+      { id: "SK-G1", criterion: "Pivot Slips", category: "Individual Fundamentals" },
+      { id: "SK-G2", criterion: "Hop Turns", category: "Individual Fundamentals" },
+      { id: "SK-G3", criterion: "White Pass Turn", category: "Individual Fundamentals" },
+      { id: "SK-G4", criterion: "Stem Christie", category: "Individual Fundamentals" },
+      { id: "SK-G5", criterion: "Short Radius Leapers", category: "Individual Fundamentals" },
+      { id: "SK-G6", criterion: "Outside Ski Turn", category: "Individual Fundamentals" },
+      { id: "SK-G7", criterion: "Javelin Turns", category: "Individual Fundamentals" },
+      { id: "SK-G8", criterion: "Reverse Javelin Turn", category: "Individual Fundamentals" },
+      { id: "SK-G9", criterion: "Falling Leaf with Edge Change", category: "Individual Fundamentals" },
+      // ── Integrated Fundamentals (Center Line) ──
+      { id: "SK-G10", criterion: "Wedge Turn (Center Line L1)", category: "Integrated Fundamentals" },
+      { id: "SK-G11", criterion: "Wedge Christie Turn (Center Line L2)", category: "Integrated Fundamentals" },
+      { id: "SK-G12", criterion: "Basic Parallel Turn (Center Line L2)", category: "Integrated Fundamentals" },
+      { id: "SK-G13", criterion: "Dynamic Parallel Turn (Center Line L3)", category: "Integrated Fundamentals" },
+      // ── Versatility ──
+      { id: "SK-G14", criterion: "Performance Short Turns — groomed blue to black", category: "Versatility" },
+      { id: "SK-G15", criterion: "Performance Medium Turns — groomed blue", category: "Versatility" },
+      { id: "SK-G16", criterion: "Variable Conditions and Terrain (Black / double black)", category: "Versatility" },
+      { id: "SK-G17", criterion: "Short Turns in Bumps (Black)", category: "Versatility" },
+      { id: "SK-G18", criterion: "Large Turns in Bumps", category: "Versatility" },
+      // ── AT-Level Performance ──
+      { id: "SK-G19", criterion: "Express intent of tactical choices, desired outcome, fundamental focus and blending, and ability to adapt to varying conditions", category: "AT-Level Performance" },
+      { id: "SK-G20", criterion: "Professionalism & Self-Management", category: "AT-Level Performance" },
     ],
   },
   "Module 3 — Clinic Leading": {
@@ -169,6 +173,42 @@ const USERS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
+// API CONFIG — Replace with your Google Apps Script deployment URL
+// ═══════════════════════════════════════════════════════════════════════
+const API_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_SHEETS_API_URL)
+  || "YOUR_APPS_SCRIPT_URL_HERE";
+
+async function apiGet(sheetName) {
+  try {
+    const res = await fetch(`${API_URL}?action=getAll&sheet=${sheetName}`);
+    const data = await res.json();
+    return data.rows || [];
+  } catch (e) { console.error("API GET error:", e); return []; }
+}
+
+async function apiCreate(sheetName, rowData) {
+  try {
+    await fetch(`${API_URL}?action=create&sheet=${sheetName}`, {
+      method: "POST", body: JSON.stringify(rowData),
+    });
+  } catch (e) { console.error("API CREATE error:", e); }
+}
+
+async function apiUpdate(sheetName, rowData) {
+  try {
+    await fetch(`${API_URL}?action=update&sheet=${sheetName}`, {
+      method: "POST", body: JSON.stringify(rowData),
+    });
+  } catch (e) { console.error("API UPDATE error:", e); }
+}
+
+async function apiDelete(sheetName, id) {
+  try {
+    await fetch(`${API_URL}?action=delete&sheet=${sheetName}&id=${id}`);
+  } catch (e) { console.error("API DELETE error:", e); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -213,6 +253,76 @@ export default function ATDevelopmentTracker() {
   const [viewingEntry, setViewingEntry] = useState(null);
   const [viewingLO, setViewingLO] = useState(null);
   const [gateFilter, setGateFilter] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // ── Load data from Google Sheets on mount ─────────────
+  useEffect(() => {
+    if (API_URL === "YOUR_APPS_SCRIPT_URL_HERE") {
+      setDataLoaded(true);
+      return;
+    }
+
+    async function loadAll() {
+      try {
+        // Load LOs
+        const loRows = await apiGet("LearningObjectives");
+        const parsedLOs = loRows.filter(r => r.id).map(r => ({
+          ...r,
+          gates: r.gates ? r.gates.split(",").map(g => g.trim()).filter(Boolean) : [],
+          score: r.score ? Number(r.score) : null,
+          activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
+        }));
+        setLos(parsedLOs);
+
+        // Load Diary Entries
+        const entryRows = await apiGet("DiaryEntries");
+        const parsedEntries = entryRows.filter(r => r.id).map(r => ({
+          ...r,
+          activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
+          attachments: r.attachments ? JSON.parse(r.attachments) : [],
+          comments: r.comments ? JSON.parse(r.comments) : [],
+        }));
+        setEntries(parsedEntries);
+
+        // Load Gate Status (for examiner scores)
+        const gateRows = await apiGet("GateStatus");
+        const gScores = {};
+        const bScores = {};
+        const bNotes = {};
+        gateRows.forEach(r => {
+          if (!r.gateId) return;
+          // Gate examiner scores
+          if (r.chrisScore || r.gatesScore || r.mikeScore) {
+            gScores[r.gateId] = {
+              chris: r.chrisScore ? Number(r.chrisScore) : 0,
+              gates: r.gatesScore ? Number(r.gatesScore) : 0,
+              mike: r.mikeScore ? Number(r.mikeScore) : 0,
+            };
+          }
+          // Baseline scores
+          if (r.baselineMark || r.baselineChris || r.baselineGates || r.baselineMike) {
+            bScores[r.gateId] = {
+              mark: r.baselineMark ? Number(r.baselineMark) : 0,
+              chris: r.baselineChris ? Number(r.baselineChris) : 0,
+              gates: r.baselineGates ? Number(r.baselineGates) : 0,
+              mike: r.baselineMike ? Number(r.baselineMike) : 0,
+            };
+          }
+          if (r.baselineNotes) {
+            bNotes[r.gateId] = r.baselineNotes;
+          }
+        });
+        setGateScores(gScores);
+        setBaselineScores(bScores);
+        setBaselineNotes(bNotes);
+      } catch (e) {
+        console.error("Failed to load data:", e);
+      }
+      setDataLoaded(true);
+    }
+
+    loadAll();
+  }, []);
 
   const gateToLOs = useMemo(() => {
     const map = {};
@@ -375,6 +485,31 @@ export default function ATDevelopmentTracker() {
   // MAIN APP (authenticated)
   // ═══════════════════════════════════════════════════════════════════
 
+  // ── Loading Screen ─────────────────────────────────────
+  if (!dataLoaded) {
+    return (
+      <div style={{
+        fontFamily: "'Outfit', system-ui, sans-serif",
+        minHeight: "100vh",
+        background: "linear-gradient(178deg, #070c18 0%, #0d1828 35%, #101e34 100%)",
+        color: "#e0e8f0",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexDirection: "column", gap: 16,
+      }}>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+        <div style={{
+          width: 40, height: 40, border: "3px solid rgba(224,120,48,0.15)",
+          borderTop: "3px solid #e07830", borderRadius: "50%",
+          animation: "spin 0.8s linear infinite",
+        }} />
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#6a8098" }}>
+          Loading your data...
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
   // Mark sees all tabs; mentors see only what's been rolled out
   // ── ROLLOUT CONTROL: add tab ids here as you introduce them ──
   const MENTOR_VISIBLE_TABS = ["baseline", "diary"];
@@ -414,11 +549,20 @@ export default function ATDevelopmentTracker() {
 
   const saveLO = () => {
     if (!editingLO) return;
+    const isNew = !los.find(l => l.id === editingLO.id);
     setLos(prev => {
       const idx = prev.findIndex(l => l.id === editingLO.id);
       if (idx >= 0) { const n = [...prev]; n[idx] = editingLO; return n; }
       return [...prev, editingLO];
     });
+    // Sync to Google Sheets
+    const sheetRow = {
+      ...editingLO,
+      gates: (editingLO.gates || []).join(","),
+      score: editingLO.score || "",
+    };
+    if (isNew) { apiCreate("LearningObjectives", sheetRow); }
+    else { apiUpdate("LearningObjectives", sheetRow); }
     setEditingLO(null);
   };
 
@@ -426,6 +570,7 @@ export default function ATDevelopmentTracker() {
     setLos(prev => prev.filter(l => l.id !== id));
     if (editingLO?.id === id) setEditingLO(null);
     if (viewingLO?.id === id) setViewingLO(null);
+    apiDelete("LearningObjectives", id);
   };
 
   // ── Entry CRUD ────────────────────────────────────────
@@ -440,18 +585,85 @@ export default function ATDevelopmentTracker() {
 
   const saveEntry = () => {
     if (!editingEntry) return;
+    const isNew = !entries.find(e => e.id === editingEntry.id);
     setEntries(prev => {
       const idx = prev.findIndex(e => e.id === editingEntry.id);
       if (idx >= 0) { const n = [...prev]; n[idx] = editingEntry; return n; }
       return [editingEntry, ...prev];
     });
+    // Sync to Google Sheets
+    const sheetRow = {
+      ...editingEntry,
+      activeLOIds: (editingEntry.activeLOIds || []).join(","),
+      attachments: JSON.stringify(editingEntry.attachments || []),
+      comments: JSON.stringify(editingEntry.comments || []),
+    };
+    if (isNew) { apiCreate("DiaryEntries", sheetRow); }
+    else { apiUpdate("DiaryEntries", sheetRow); }
     setEditingEntry(null);
   };
 
   const deleteEntry = (id) => {
     setEntries(prev => prev.filter(e => e.id !== id));
     if (viewingEntry?.id === id) setViewingEntry(null);
+    apiDelete("DiaryEntries", id);
   };
+
+  // ── Save baseline & gate scores to Sheets ─────────────
+  const saveGateToSheet = useCallback((gateId, baseScore, gateScore, note) => {
+    apiUpdate("GateStatus", {
+      gateId,
+      baselineMark: baseScore?.mark || "",
+      baselineChris: baseScore?.chris || "",
+      baselineGates: baseScore?.gates || "",
+      baselineMike: baseScore?.mike || "",
+      baselineNotes: note || "",
+      chrisScore: gateScore?.chris || "",
+      gatesScore: gateScore?.gates || "",
+      mikeScore: gateScore?.mike || "",
+    });
+  }, []);
+
+  // Debounced save for baseline scores (fires 1s after last change)
+  const [saveTimer, setSaveTimer] = useState(null);
+  const debouncedSaveGate = useCallback((gateId) => {
+    if (saveTimer) clearTimeout(saveTimer);
+    setSaveTimer(setTimeout(() => {
+      saveGateToSheet(
+        gateId,
+        baselineScores[gateId],
+        gateScores[gateId],
+        baselineNotes[gateId]
+      );
+    }, 1000));
+  }, [saveTimer, baselineScores, gateScores, baselineNotes, saveGateToSheet]);
+
+  // Wrap baseline/gate score setters to trigger save
+  const updateBaselineScore = (gateId, who, val) => {
+    setBaselineScores(prev => {
+      const next = { ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 } };
+      return next;
+    });
+    setTimeout(() => debouncedSaveGate(gateId), 0);
+  };
+
+  const updateBaselineNote = (gateId, val) => {
+    setBaselineNotes(prev => ({ ...prev, [gateId]: val }));
+    setTimeout(() => debouncedSaveGate(gateId), 0);
+  };
+
+  const updateGateExaminerScore = (gateId, who, val) => {
+    setGateScores(prev => {
+      const next = { ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 } };
+      return next;
+    });
+    setTimeout(() => debouncedSaveGate(gateId), 0);
+  };
+
+  // Save comments back to sheet when they change
+  const saveEntryComments = useCallback((entryId, comments) => {
+    apiUpdate("DiaryEntries", { id: entryId, comments: JSON.stringify(comments) });
+  }, []);
 
   // ── Gate selector for LO editing ─────────────────────
   const GatePicker = ({ selected, onChange }) => {
@@ -948,6 +1160,7 @@ export default function ATDevelopmentTracker() {
                               const updated = { ...e, comments: (e.comments || []).filter((_, i) => i !== ci) };
                               setEntries(prev => prev.map(en => en.id === e.id ? updated : en));
                               setViewingEntry(updated);
+                              saveEntryComments(e.id, updated.comments);
                             }}
                             style={{
                               padding: "2px 5px", borderRadius: 3, fontSize: 9, fontWeight: 600,
@@ -993,6 +1206,7 @@ export default function ATDevelopmentTracker() {
                           const updated = { ...e, comments: [...(e.comments || []), newComment] };
                           setEntries(prev => prev.map(en => en.id === e.id ? updated : en));
                           setViewingEntry(updated);
+                          saveEntryComments(e.id, updated.comments);
                           textarea.value = "";
                         }
                       }}
@@ -1010,6 +1224,7 @@ export default function ATDevelopmentTracker() {
                         const updated = { ...e, comments: [...(e.comments || []), newComment] };
                         setEntries(prev => prev.map(en => en.id === e.id ? updated : en));
                         setViewingEntry(updated);
+                        saveEntryComments(e.id, updated.comments);
                         textarea.value = "";
                       }}
                       style={{
@@ -1311,14 +1526,13 @@ export default function ATDevelopmentTracker() {
                     {mod.gates.map((gate, gi) => {
                       const scores = baselineScores[gate.id] || { mark: 0, chris: 0, gates: 0, mike: 0 };
                       const note = baselineNotes[gate.id] || "";
+                      const prevCategory = gi > 0 ? mod.gates[gi - 1].category : null;
+                      const showCategoryHeader = gate.category && gate.category !== prevCategory;
                       const updateScore = (who, val) => {
-                        setBaselineScores(prev => ({
-                          ...prev,
-                          [gate.id]: { ...prev[gate.id], [who]: val ? Number(val) : 0 }
-                        }));
+                        updateBaselineScore(gate.id, who, val);
                       };
                       const updateNote = (val) => {
-                        setBaselineNotes(prev => ({ ...prev, [gate.id]: val }));
+                        updateBaselineNote(gate.id, val);
                       };
 
                       const scoreSelect = (who, value) => (
@@ -1342,12 +1556,28 @@ export default function ATDevelopmentTracker() {
                       );
 
                       return (
-                        <div key={gate.id} style={{
-                          display: "grid", gridTemplateColumns: "1fr 42px 42px 42px 42px 1fr",
-                          gap: 4, padding: "6px 8px", alignItems: "center",
-                          background: gi % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)",
-                          borderRadius: 4,
-                        }}>
+                        <div key={gate.id}>
+                          {showCategoryHeader && (
+                            <div style={{
+                              padding: "6px 8px 3px",
+                              marginTop: gi > 0 ? 8 : 0,
+                              borderBottom: `1.5px solid ${mod.color}25`,
+                              marginBottom: 2,
+                            }}>
+                              <span style={{
+                                fontSize: 9, fontWeight: 800, color: mod.color,
+                                textTransform: "uppercase", letterSpacing: "0.08em",
+                              }}>
+                                {gate.category}
+                              </span>
+                            </div>
+                          )}
+                          <div style={{
+                            display: "grid", gridTemplateColumns: "1fr 42px 42px 42px 42px 1fr",
+                            gap: 4, padding: "6px 8px", alignItems: "center",
+                            background: gi % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)",
+                            borderRadius: 4,
+                          }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                             <span style={{ fontSize: 10, fontWeight: 700, color: mod.color, flexShrink: 0 }}>{gate.id}</span>
                             <span style={{ fontSize: 11, color: "#a0b0c0", lineHeight: 1.3 }}>{gate.criterion}</span>
@@ -1366,6 +1596,7 @@ export default function ATDevelopmentTracker() {
                               borderRadius: 4, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
                             }}
                           />
+                        </div>
                         </div>
                       );
                     })}
@@ -1626,10 +1857,14 @@ export default function ATDevelopmentTracker() {
                     <span style={{ fontSize: 8, color: "#28a858", fontWeight: 700, textAlign: "center" }}>M</span>
                   </div>
 
-                  {mod.gates.map(gate => {
+                  {mod.gates.map((gate, gi) => {
                     const linkedLOs = gateToLOs[gate.id] || [];
                     const entryCount = (gateToEntries[gate.id] || []).length;
                     const hasLO = linkedLOs.length > 0;
+
+                    // Show category subheading when it changes
+                    const prevCategory = gi > 0 ? mod.gates[gi - 1].category : null;
+                    const showCategoryHeader = gate.category && gate.category !== prevCategory;
 
                     // Gate scores from examiners — this is the real gate status
                     const gs = gateScores[gate.id] || { chris: 0, gates: 0, mike: 0 };
@@ -1644,10 +1879,7 @@ export default function ATDevelopmentTracker() {
                     const hasBaseline = allBaselineScores.length > 0;
 
                     const updateGateScore = (who, val) => {
-                      setGateScores(prev => ({
-                        ...prev,
-                        [gate.id]: { ...prev[gate.id], [who]: val ? Number(val) : 0 }
-                      }));
+                      updateGateExaminerScore(gate.id, who, val);
                     };
 
                     const examinerSelect = (who, value) => (
@@ -1671,12 +1903,28 @@ export default function ATDevelopmentTracker() {
                     );
 
                     return (
-                      <div key={gate.id} style={{
-                        display: "grid", gridTemplateColumns: "28px 28px 1fr 38px 38px 38px",
-                        gap: 5, padding: "8px 10px", alignItems: "start",
-                        borderBottom: "1px solid rgba(255,255,255,0.025)",
-                        opacity: isPassed ? 0.65 : 1,
-                      }}>
+                      <div key={gate.id}>
+                        {showCategoryHeader && (
+                          <div style={{
+                            padding: "8px 10px 4px",
+                            marginTop: gi > 0 ? 10 : 0,
+                            borderBottom: `1.5px solid ${mod.color}25`,
+                            marginBottom: 4,
+                          }}>
+                            <span style={{
+                              fontSize: 10, fontWeight: 800, color: mod.color,
+                              textTransform: "uppercase", letterSpacing: "0.08em",
+                            }}>
+                              {gate.category}
+                            </span>
+                          </div>
+                        )}
+                        <div style={{
+                          display: "grid", gridTemplateColumns: "28px 28px 1fr 38px 38px 38px",
+                          gap: 5, padding: "8px 10px", alignItems: "start",
+                          borderBottom: "1px solid rgba(255,255,255,0.025)",
+                          opacity: isPassed ? 0.65 : 1,
+                        }}>
                         {/* Current best gate score */}
                         <div style={{
                           width: 28, height: 22, borderRadius: 4,
@@ -1741,6 +1989,7 @@ export default function ATDevelopmentTracker() {
                         {examinerSelect("chris", gs.chris)}
                         {examinerSelect("gates", gs.gates)}
                         {examinerSelect("mike", gs.mike)}
+                      </div>
                       </div>
                     );
                   })}

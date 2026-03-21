@@ -242,3 +242,55 @@ function testSetup() {
   
   Logger.log("Setup test complete. If all sheets show row counts, you're good to deploy.");
 }
+
+/**
+ * Run this ONCE to add the new columns needed for baseline and examiner scoring.
+ * Safe to run multiple times — it checks before adding.
+ */
+function addScoringColumns() {
+  var ss = getSpreadsheet();
+  var ws = ss.getSheetByName("GateStatus");
+  if (!ws) { Logger.log("GateStatus sheet not found!"); return; }
+  
+  var headers = ws.getRange(1, 1, 1, ws.getLastColumn()).getValues()[0];
+  var newCols = [
+    "baselineMark", "baselineChris", "baselineGates", "baselineMike", 
+    "baselineNotes", "chrisScore", "gatesScore", "mikeScore"
+  ];
+  
+  var added = 0;
+  for (var i = 0; i < newCols.length; i++) {
+    if (headers.indexOf(newCols[i]) === -1) {
+      var nextCol = ws.getLastColumn() + 1;
+      ws.getRange(1, nextCol).setValue(newCols[i]);
+      added++;
+    }
+  }
+  
+  Logger.log("Added " + added + " new columns. Total columns now: " + ws.getLastColumn());
+  Logger.log("GateStatus headers: " + ws.getRange(1, 1, 1, ws.getLastColumn()).getValues()[0].join(", "));
+}
+
+/**
+ * Run this ONCE to add columns for attachments and comments to DiaryEntries.
+ * Safe to run multiple times.
+ */
+function addDiaryColumns() {
+  var ss = getSpreadsheet();
+  var ws = ss.getSheetByName("DiaryEntries");
+  if (!ws) { Logger.log("DiaryEntries sheet not found!"); return; }
+  
+  var headers = ws.getRange(1, 1, 1, ws.getLastColumn()).getValues()[0];
+  var newCols = ["attachments", "comments"];
+  
+  var added = 0;
+  for (var i = 0; i < newCols.length; i++) {
+    if (headers.indexOf(newCols[i]) === -1) {
+      var nextCol = ws.getLastColumn() + 1;
+      ws.getRange(1, nextCol).setValue(newCols[i]);
+      added++;
+    }
+  }
+  
+  Logger.log("Added " + added + " new columns to DiaryEntries.");
+}
