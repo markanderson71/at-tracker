@@ -268,6 +268,7 @@ export default function ATDevelopmentTracker() {
   const [viewingLO, setViewingLO] = useState(null);
   const [gateFilter, setGateFilter] = useState(null);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [diaryFilter, setDiaryFilter] = useState("all"); // all | attention | unread
   const saveTimerRef = useRef({});
 
   // ── Load data from Google Sheets on mount ─────────────
@@ -294,13 +295,16 @@ export default function ATDevelopmentTracker() {
         const parsedEntries = entryRows.filter(r => r.id).map(r => {
           let attachments = [];
           let comments = [];
+          let readBy = [];
           try { attachments = r.attachments ? JSON.parse(r.attachments) : []; } catch(e) {}
           try { comments = r.comments ? JSON.parse(r.comments) : []; } catch(e) {}
+          try { readBy = r.readBy ? JSON.parse(r.readBy) : []; } catch(e) {}
           return {
             ...r,
             activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
             attachments,
             comments,
+            readBy,
           };
         });
         setEntries(parsedEntries);
@@ -598,7 +602,7 @@ export default function ATDevelopmentTracker() {
   const newEntry = () => {
     setEditingEntry({
       id: uid(), date: today(), seasonWeek: "", location: "", duration: "",
-      moduleFocus: "Technical/MA", flag: "FYI", activeLOIds: [], attachments: [], comments: [],
+      moduleFocus: "Technical/MA", flag: "FYI", activeLOIds: [], attachments: [], comments: [], readBy: [],
       workedOn: "", observed: "", wentWell: "", struggling: "",
       questionsForMentors: "", nextSteps: "", mentorNotes: "",
     });
@@ -618,6 +622,7 @@ export default function ATDevelopmentTracker() {
       activeLOIds: (editingEntry.activeLOIds || []).join(","),
       attachments: JSON.stringify(editingEntry.attachments || []),
       comments: JSON.stringify(editingEntry.comments || []),
+      readBy: JSON.stringify(editingEntry.readBy || []),
     };
     if (isNew) { apiCreate("DiaryEntries", sheetRow); }
     else { apiUpdate("DiaryEntries", sheetRow); }
@@ -684,6 +689,20 @@ export default function ATDevelopmentTracker() {
   // Save comments back to sheet when they change
   const saveEntryComments = (entryId, comments) => {
     apiUpdate("DiaryEntries", { id: entryId, comments: JSON.stringify(comments) });
+  };
+
+  // Mark entry as read by current user
+  const markAsRead = (entry) => {
+    if (!currentUser) return;
+    const readBy = entry.readBy || [];
+    const alreadyRead = readBy.find(r => r.userId === currentUser.key);
+    if (alreadyRead) return; // already marked
+
+    const newReadBy = [...readBy, { userId: currentUser.key, timestamp: new Date().toISOString() }];
+    const updated = { ...entry, readBy: newReadBy };
+    setEntries(prev => prev.map(en => en.id === entry.id ? updated : en));
+    apiUpdate("DiaryEntries", { id: entry.id, readBy: JSON.stringify(newReadBy) });
+    return updated;
   };
 
   // ── Gate selector for LO editing ─────────────────────
@@ -866,6 +885,115 @@ export default function ATDevelopmentTracker() {
       {/* ── CONTENT ─────────────────────────────────── */}
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "16px 16px 60px" }}>
 
+        {/* ═══ NOTIFICATION SUMMARY ═══ */}
+        {!isSubView && (() => {
+          const userKey = currentUser?.key;
+          if (!userKey) return null;
+
+          // Entries needing attention: flagged "For Review" and this user hasn't commented
+          const needsAttention = entries.filter(e =>
+            e.flag === "For Review" &&
+            !(e.comments || []).some(c => c.userId === userKey)
+          );
+
+          // Unread entries: not in this user's readBy
+          const unread = entries.filter(e =>
+            !(e.readBy || []).some(r => r.userId === userKey)
+          );
+
+          // New comments from others since last read
+          const entriesWithNewComments = entries.filter(e => {
+            const myRead = (e.readBy || []).find(r => r.userId === userKey);
+            if (!myRead) return (e.comments || []).length > 0;
+            return (e.comments || []).some(c => c.userId !== userKey && c.timestamp > myRead.timestamp);
+          });
+
+          // LOs pending verification
+          const pendingVerification = los.filter(l => l.status === "Pending Verification");
+
+          const hasNotifications = needsAttention.length > 0 || unread.length > 0 || entriesWithNewComments.length > 0 || pendingVerification.length > 0;
+
+          if (!hasNotifications) return null;
+
+          return (
+            <div style={{
+              padding: "12px 14px", marginBottom: 14, borderRadius: 10,
+              background: "rgba(224,120,48,0.05)",
+              border: "1px solid rgba(224,120,48,0.15)",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#e8a050", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Since your last visit
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {needsAttention.length > 0 && (
+                  <button
+                    onClick={() => { setTab("diary"); setDiaryFilter("attention"); }}
+                    style={{
+                      padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                      background: "rgba(230,80,40,0.1)", border: "1px solid rgba(230,80,40,0.25)",
+                      color: "#e05028", fontSize: 13, fontWeight: 700,
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}
+                  >
+                    <span style={{
+                      width: 20, height: 20, borderRadius: "50%",
+                      background: "#e05028", color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 11, fontWeight: 800,
+                    }}>{needsAttention.length}</span>
+                    need{needsAttention.length === 1 ? "s" : ""} your feedback
+                  </button>
+                )}
+                {unread.length > 0 && (
+                  <button
+                    onClick={() => { setTab("diary"); setDiaryFilter("unread"); }}
+                    style={{
+                      padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                      background: "rgba(48,136,204,0.08)", border: "1px solid rgba(48,136,204,0.2)",
+                      color: "#3088cc", fontSize: 13, fontWeight: 700,
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}
+                  >
+                    <span style={{
+                      width: 20, height: 20, borderRadius: "50%",
+                      background: "#3088cc", color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 11, fontWeight: 800,
+                    }}>{unread.length}</span>
+                    unread {unread.length === 1 ? "entry" : "entries"}
+                  </button>
+                )}
+                {entriesWithNewComments.length > 0 && (
+                  <button
+                    onClick={() => { setTab("diary"); setDiaryFilter("all"); }}
+                    style={{
+                      padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                      background: "rgba(40,168,88,0.08)", border: "1px solid rgba(40,168,88,0.2)",
+                      color: "#28a858", fontSize: 13, fontWeight: 700,
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}
+                  >
+                    💬 {entriesWithNewComments.length} with new comments
+                  </button>
+                )}
+                {pendingVerification.length > 0 && (
+                  <button
+                    onClick={() => { setTab("los"); }}
+                    style={{
+                      padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                      background: "rgba(200,170,50,0.08)", border: "1px solid rgba(200,170,50,0.2)",
+                      color: "#c8aa32", fontSize: 13, fontWeight: 700,
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}
+                  >
+                    {pendingVerification.length} LO{pendingVerification.length !== 1 ? "s" : ""} pending verification
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ═══ LO DETAIL VIEW ═══ */}
         {viewingLO && !editingLO && (() => {
           const lo = viewingLO;
@@ -1029,10 +1157,58 @@ export default function ATDevelopmentTracker() {
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
                     <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 13, fontWeight: 700, background: fc.bg, border: `1px solid ${fc.border}`, color: fc.text }}>{e.flag}</span>
-                    <button onClick={() => setEditingEntry({ ...e, activeLOIds: [...(e.activeLOIds || [])], attachments: [...(e.attachments || [])], comments: [...(e.comments || [])] })} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                    <button onClick={() => setEditingEntry({ ...e, activeLOIds: [...(e.activeLOIds || [])], attachments: [...(e.attachments || [])], comments: [...(e.comments || [])], readBy: [...(e.readBy || [])] })} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Edit</button>
                     <button onClick={() => { if (confirm("Delete?")) deleteEntry(e.id); }} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.2)", color: "#b04040", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Delete</button>
                   </div>
                 </div>
+
+                {/* Read-by indicators */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+                  padding: "8px 10px", borderRadius: 7,
+                  background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)",
+                }}>
+                  <span style={{ fontSize: 12, color: "#4a6080", fontWeight: 600 }}>Seen by:</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {["mark", "chris", "gates", "mike"].map(userId => {
+                      const user = USERS[userId];
+                      const readEntry = (e.readBy || []).find(r => r.userId === userId);
+                      const hasCommented = (e.comments || []).some(c => c.userId === userId);
+                      const isRead = !!readEntry;
+                      return (
+                        <div
+                          key={userId}
+                          title={isRead
+                            ? `${user.name} — viewed ${new Date(readEntry.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" })}${hasCommented ? " · commented" : ""}`
+                            : `${user.name} — not yet viewed`
+                          }
+                          style={{
+                            width: 28, height: 28, borderRadius: "50%",
+                            background: isRead ? `${user.color}25` : "rgba(255,255,255,0.03)",
+                            border: `2px solid ${isRead ? `${user.color}60` : "rgba(255,255,255,0.06)"}`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 11, fontWeight: 800,
+                            color: isRead ? user.color : "#2a3c50",
+                            position: "relative",
+                            cursor: "default",
+                          }}
+                        >
+                          {user.name[0]}
+                          {hasCommented && (
+                            <div style={{
+                              position: "absolute", bottom: -2, right: -2,
+                              width: 12, height: 12, borderRadius: "50%",
+                              background: "#28a858", border: "2px solid #0d1828",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontSize: 7, color: "#fff",
+                            }}>💬</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {linkedLOs.length > 0 && (
                   <div style={{ marginBottom: 12 }}>
                     <SectionLabel>Active Learning Objectives</SectionLabel>
@@ -1726,9 +1902,27 @@ export default function ATDevelopmentTracker() {
         )}
 
         {/* ═══ TAB: DIARY ═══ */}
-        {tab === "diary" && !isSubView && (
+        {tab === "diary" && !isSubView && (() => {
+          const userKey = currentUser?.key;
+
+          // Compute filtered entries
+          const needsAttentionEntries = entries.filter(e =>
+            e.flag === "For Review" &&
+            !(e.comments || []).some(c => c.userId === userKey)
+          );
+          const unreadEntries = entries.filter(e =>
+            !(e.readBy || []).some(r => r.userId === userKey)
+          );
+
+          const filteredEntries = diaryFilter === "attention"
+            ? needsAttentionEntries
+            : diaryFilter === "unread"
+            ? unreadEntries
+            : entries;
+
+          return (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div style={{ fontSize: 15, color: "#4a6080" }}>Sessions linked to LOs — gates auto-derived.</div>
               <button onClick={newEntry} style={{
                 padding: "7px 14px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.4)",
@@ -1736,21 +1930,59 @@ export default function ATDevelopmentTracker() {
                 whiteSpace: "nowrap", flexShrink: 0,
               }}>+ New Entry</button>
             </div>
-            {entries.length === 0 ? (
+
+            {/* Filter buttons */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
+              {[
+                { id: "all", label: `All (${entries.length})`, color: "#7a9ab5" },
+                { id: "attention", label: `Needs Feedback (${needsAttentionEntries.length})`, color: "#e05028" },
+                { id: "unread", label: `Unread (${unreadEntries.length})`, color: "#3088cc" },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setDiaryFilter(f.id)}
+                  style={{
+                    padding: "5px 11px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    border: diaryFilter === f.id ? `1.5px solid ${f.color}` : "1.5px solid rgba(255,255,255,0.06)",
+                    background: diaryFilter === f.id ? `${f.color}15` : "rgba(255,255,255,0.015)",
+                    color: diaryFilter === f.id ? f.color : "#4a6080",
+                  }}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {filteredEntries.length === 0 ? (
               <div style={{ textAlign: "center", padding: "50px 20px", color: "#2a3c50" }}>
-                <div style={{ fontSize: 35, marginBottom: 8, opacity: 0.4 }}>⛷</div>
-                <div style={{ fontSize: 17, fontWeight: 600, color: "#4a6080" }}>No diary entries yet</div>
-                <div style={{ fontSize: 15, color: "#2a3c50", marginTop: 4 }}>After your next session, tap "+ New Entry" to log it.</div>
+                <div style={{ fontSize: 35, marginBottom: 8, opacity: 0.4 }}>
+                  {diaryFilter === "attention" ? "✅" : diaryFilter === "unread" ? "👀" : "⛷"}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 600, color: "#4a6080" }}>
+                  {diaryFilter === "attention" ? "All caught up — no entries need your feedback"
+                    : diaryFilter === "unread" ? "You've read everything"
+                    : "No diary entries yet"}
+                </div>
+                {diaryFilter !== "all" && (
+                  <button onClick={() => setDiaryFilter("all")} style={{
+                    marginTop: 12, padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600,
+                    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
+                    color: "#6a8098", cursor: "pointer",
+                  }}>Show all entries</button>
+                )}
               </div>
             ) : (
-              entries.map(e => {
+              filteredEntries.map(e => {
                 const fc = FLAG_COLORS[e.flag] || FLAG_COLORS["FYI"];
                 const mc = MODULE_COLORS_SIMPLE[e.moduleFocus] || "#7a9ab5";
                 const linkedLOs = los.filter(l => (e.activeLOIds || []).includes(l.id));
                 const derivedGates = [...new Set(linkedLOs.flatMap(l => l.gates || []))];
+                const isUnread = !(e.readBy || []).some(r => r.userId === userKey);
                 return (
-                  <div key={e.id} onClick={() => setViewingEntry(e)} style={{ cursor: "pointer" }}>
-                    <Card>
+                  <div key={e.id} onClick={() => { const updated = markAsRead(e); setViewingEntry(updated || e); }} style={{ cursor: "pointer" }}>
+                    <Card style={{
+                      borderLeft: isUnread ? "3px solid #3088cc" : e.flag === "For Review" && !(e.comments || []).some(c => c.userId === userKey) ? "3px solid #e05028" : undefined,
+                    }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                         <div style={{
                           width: 44, flexShrink: 0, textAlign: "center", padding: "5px 0",
@@ -1770,6 +2002,25 @@ export default function ATDevelopmentTracker() {
                             {e.location && <span style={{ fontSize: 13, color: "#3d5470" }}>{e.location}</span>}
                             {(e.attachments || []).length > 0 && <span style={{ fontSize: 12, color: "#3088cc" }}>📎 {e.attachments.length}</span>}
                             {(e.comments || []).length > 0 && <span style={{ fontSize: 12, color: "#28a858" }}>💬 {e.comments.length}</span>}
+                            {/* Read-by mini avatars */}
+                            <span style={{ display: "inline-flex", gap: 2, marginLeft: 2 }}>
+                              {["mark", "chris", "gates", "mike"].map(userId => {
+                                const user = USERS[userId];
+                                const isRead = (e.readBy || []).some(r => r.userId === userId);
+                                const hasCommented = (e.comments || []).some(c => c.userId === userId);
+                                if (!isRead && !hasCommented) return null;
+                                return (
+                                  <span key={userId} title={`${user.name}${hasCommented ? " (commented)" : " (viewed)"}`} style={{
+                                    width: 16, height: 16, borderRadius: "50%",
+                                    background: `${user.color}20`, border: `1.5px solid ${user.color}50`,
+                                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                    fontSize: 8, fontWeight: 800, color: user.color,
+                                  }}>
+                                    {user.name[0]}
+                                  </span>
+                                );
+                              })}
+                            </span>
                           </div>
                           <div style={{ fontSize: 15, color: "#8898a8", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                             {e.workedOn || "No description"}
@@ -1793,7 +2044,8 @@ export default function ATDevelopmentTracker() {
               })
             )}
           </>
-        )}
+          );
+        })()}
 
         {/* ═══ TAB: GATE READINESS ═══ */}
         {tab === "gates" && !isSubView && (
