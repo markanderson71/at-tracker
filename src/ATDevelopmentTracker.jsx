@@ -183,49 +183,61 @@ const API_ENABLED = !!API_URL;
 if (API_ENABLED) { console.log("AT Tracker API connected"); }
 else { console.log("AT Tracker API: NOT CONFIGURED — set VITE_SHEETS_API_URL in .env.local or Vercel"); }
 
-async function apiGet(sheetName) {
-  if (!API_ENABLED) return [];
-  try {
-    const url = `${API_URL}?action=getAll&sheet=${encodeURIComponent(sheetName)}`;
-    const res = await fetch(url, { method: "GET", redirect: "follow" });
-    const data = await res.json();
-    return data.rows || [];
-  } catch (e) { console.error("API GET error:", e); return []; }
+// JSONP-style GET for Google Apps Script (avoids CORS redirect issue)
+function apiGet(sheetName) {
+  if (!API_ENABLED) return Promise.resolve([]);
+  return new Promise((resolve) => {
+    const callbackName = "_cb_" + Math.random().toString(36).slice(2, 8);
+    const url = `${API_URL}?action=getAll&sheet=${encodeURIComponent(sheetName)}&callback=${callbackName}`;
+
+    window[callbackName] = (data) => {
+      delete window[callbackName];
+      document.body.removeChild(script);
+      resolve(data.rows || []);
+    };
+
+    const script = document.createElement("script");
+    script.src = url;
+    script.onerror = () => {
+      delete window[callbackName];
+      document.body.removeChild(script);
+      console.error("API GET error for", sheetName);
+      resolve([]);
+    };
+    document.body.appendChild(script);
+
+    // Timeout fallback
+    setTimeout(() => {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        try { document.body.removeChild(script); } catch(e) {}
+        console.error("API GET timeout for", sheetName);
+        resolve([]);
+      }
+    }, 10000);
+  });
 }
 
-async function apiCreate(sheetName, rowData) {
+// POST via form submission in hidden iframe (avoids CORS for writes)
+async function apiPost(action, sheetName, rowData, id) {
   if (!API_ENABLED) return;
   try {
-    const url = `${API_URL}?action=create&sheet=${encodeURIComponent(sheetName)}`;
-    await fetch(url, {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify(rowData),
-    });
-  } catch (e) { console.error("API CREATE error:", e); }
+    let url = `${API_URL}?action=${action}&sheet=${encodeURIComponent(sheetName)}`;
+    if (id) url += `&id=${encodeURIComponent(id)}`;
+
+    // Use navigator.sendBeacon for fire-and-forget, or fetch with no-cors
+    const body = JSON.stringify(rowData || {});
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(url, body);
+    } else {
+      await fetch(url, { method: "POST", mode: "no-cors", body });
+    }
+  } catch (e) { console.error(`API ${action} error:`, e); }
 }
 
-async function apiUpdate(sheetName, rowData) {
-  if (!API_ENABLED) return;
-  try {
-    const url = `${API_URL}?action=update&sheet=${encodeURIComponent(sheetName)}`;
-    await fetch(url, {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify(rowData),
-    });
-  } catch (e) { console.error("API UPDATE error:", e); }
-}
-
-async function apiDelete(sheetName, id) {
-  if (!API_ENABLED) return;
-  try {
-    const url = `${API_URL}?action=delete&sheet=${encodeURIComponent(sheetName)}&id=${encodeURIComponent(id)}`;
-    await fetch(url, { method: "GET", redirect: "follow" });
-  } catch (e) { console.error("API DELETE error:", e); }
-}
+function apiCreate(sheetName, rowData) { return apiPost("create", sheetName, rowData); }
+function apiUpdate(sheetName, rowData) { return apiPost("update", sheetName, rowData); }
+function apiDelete(sheetName, id) { return apiPost("delete", sheetName, null, id); }
 
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN APP
@@ -273,6 +285,7 @@ export default function ATDevelopmentTracker() {
   const [viewingLO, setViewingLO] = useState(null);
   const [gateFilter, setGateFilter] = useState(null);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const saveTimerRef = useRef({});
 
   // ── Load data from Google Sheets on mount ─────────────
   useEffect(() => {
@@ -635,7 +648,6 @@ export default function ATDevelopmentTracker() {
   };
 
   // ── Save baseline & gate scores to Sheets ─────────────
-  const saveTimerRef = useRef({});
 
   const saveGateToSheet = (gateId) => {
     // Clear any pending save for this gate
