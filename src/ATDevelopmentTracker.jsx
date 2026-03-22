@@ -103,6 +103,60 @@ const FITTS_POSNER = [
   { score: 6, label: "High Autonomous", short: "6" },
 ];
 
+// ═══════════════════════════════════════════════════════════════════════
+// SUGGESTED ACTIVITIES — AT Program Guide Learning Experiences
+// ═══════════════════════════════════════════════════════════════════════
+
+const LEARNING_EXPERIENCES = {
+  "Professionalism": {
+    color: "#8a70b8",
+    items: [
+      { id: "LE-P1", title: "Responding When Plans Change", desc: "Reflect on how you respond and interact with others when things don't go according to plan (sudden weather change, terrain change, shift in group social structure)." },
+      { id: "LE-P2", title: "Emotional & Physical Self-Awareness", desc: "Identify what you need to pay attention to emotionally and physically to adjust and adapt in a training environment. What drives you nuts, and how do you manage it externally?" },
+      { id: "LE-P3", title: "Supporting Others", desc: "Reflect on situations where things were going your way but not for others. How did you support them without detracting from their experience?" },
+    ],
+  },
+  "Module 1 — Technical / MA": {
+    color: "#e07830",
+    items: [
+      { id: "LE-MA1", title: "Analyzing Ideal Skiing Performance", desc: "Analyze a world-class skier on or off-piste using observations, physics/skiing mechanics, biomechanics, ski design and tuning, and/or boot alignment." },
+      { id: "LE-MA2", title: "Differences Between Cert Levels", desc: "Outline differences in PSIA standards (L1, L2, L3) for MA and Technical Understanding. Reference IDP, National Standards, PSIA-RM Assessment Forms." },
+      { id: "LE-MA3", title: "Prioritization", desc: "Using video of a cert candidate, prioritize Fundamentals/Skills they should develop. Reflect on different ways to set priorities." },
+      { id: "LE-MA4", title: "Multiple Skill-to-Skill Relationships", desc: "Identify and describe body-to-ski cause and effect; describe relationships from both directions; use biomechanics and physics." },
+      { id: "LE-MA5", title: "Personal Alignment & Boot-fitting", desc: "Participate in or observe a boot fitting. Identify how alignment affects body-to-ski performance and how to spot misalignment in a skier." },
+      { id: "LE-MA6", title: "Tactics", desc: "Using video, identify a candidate's tactical choices and describe how changes would force skill-to-skill changes and enhance performance." },
+      { id: "LE-MA7", title: "Physics, Ski Design & Biomechanics", desc: "Attend a Basic Skiing Physics, Ski Design & Tuning, or Biomechanics/Anatomy clinic or seminar." },
+      { id: "LE-MA8", title: "MA Practice Sessions", desc: "Participate in a minimum of two MA practice sessions with a mentor — watching candidates from multiple levels; deliver AT-level analysis using multiple and blended skill-to-skill relationships." },
+      { id: "LE-MA9", title: "Center Line & Common Threads", desc: "Explain how Common Threads highlight mechanical focuses observable at all levels; identify activities from the IDP that develop a chosen Common Thread." },
+    ],
+  },
+  "Module 2 — Skiing": {
+    color: "#3088cc",
+    items: [
+      { id: "LE-SK1", title: "Personal Skiing vs. Ideals", desc: "Analyze your skiing vs. a skier who more closely represents ideal. Identify specific skill-to-skill differences and your plan to minimize them." },
+      { id: "LE-SK2", title: "Personal Development Over Time", desc: "Analyze your skiing at two distinct points in time. What was learned, what changed, how do you know learning occurred?" },
+      { id: "LE-SK3", title: "Race/Drill-Based Practice", desc: "On-piste closed environment race/drill-based practice session — use stubbies and/or brushes for skill development; develop ideas for setting up environments with varied learning opportunities." },
+      { id: "LE-SK4", title: "Problem Solving / Skill Development", desc: "Structured training using a 50/50 failure-success mix. Variations to tasks, combining tasks for accuracy, changing environment without changing speed, changing speed without changing environment, varying skill blends." },
+      { id: "LE-SK5", title: "Center Line & Common Threads (Skiing)", desc: "Ski through Center Line milestones using Common Threads to maintain consistent mechanics; alternate between Center Line milestones and similar-speed tasks." },
+    ],
+  },
+  "Module 3 — Clinic Leading": {
+    color: "#28a858",
+    items: [
+      { id: "LE-CL1", title: "What Makes a Great Trainer?", desc: "Analyze a trainer/clinic leader/examiner you consider a truly great educator. How do they use the Learning Connection Model?" },
+      { id: "LE-CL2", title: "Creating Learning Outcomes", desc: "Create observable, measurable LOs for 1-hour, 1-day, and 2-day clinics across various audiences (New Hires, L1–L3 candidates) and settings." },
+      { id: "LE-CL3", title: "Progressions — Skills to Ski Design", desc: "Create two progressions of 3–5 steps each connecting Skills/Fundamentals to Ski Design, Turning, and Speed Control." },
+      { id: "LE-CL4", title: "Experiential Learning", desc: "Create 5 tasks that develop skills through skill-to-skill relationships for a defined audience; include modifications for higher and lower skill levels." },
+      { id: "LE-CL5", title: "Variations & Lateral Learning", desc: "Build a 3-task progression from an Individual Fundamental Assessment Activity using Speed, Environment, and/or Accuracy modifications; demonstrate Center Line improvement through Lateral Learning." },
+      { id: "LE-CL6", title: "Feedback", desc: "Reflect on timeliness, detail and accuracy, right amount, and relevance of feedback in a training clinic." },
+      { id: "LE-CL7", title: "Clinic Auditing", desc: "Audit a training clinic using reflective observation (not evaluation)." },
+      { id: "LE-CL8", title: "Reverse Audit", desc: "Lead a training clinic and debrief using reflective observation. What will you do the same / differently next time?" },
+    ],
+  },
+};
+
+const ALL_LEs = Object.values(LEARNING_EXPERIENCES).flatMap(mod => mod.items);
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 const today = () => new Date().toISOString().split("T")[0];
 
@@ -268,7 +322,9 @@ export default function ATDevelopmentTracker() {
   const [viewingLO, setViewingLO] = useState(null);
   const [gateFilter, setGateFilter] = useState(null);
   const [dataLoaded, setDataLoaded] = useState(false);
-  const [diaryFilter, setDiaryFilter] = useState("all"); // all | attention | unread
+  const [diaryFilter, setDiaryFilter] = useState("all");
+  const [leStatus, setLeStatus] = useState({});
+  const [videoData, setVideoData] = useState({}); // { "SK-G1": { cues: "...", videos: [{ url, date, notes, comments: [] }] } } // { "LE-MA1": { status: "Complete", date: "...", notes: "..." }, ... } // all | attention | unread
   const saveTimerRef = useRef({});
 
   // ── Load data from Google Sheets on mount ─────────────
@@ -340,6 +396,18 @@ export default function ATDevelopmentTracker() {
         setGateScores(gScores);
         setBaselineScores(bScores);
         setBaselineNotes(bNotes);
+
+        // Load LE completion status (stored as a special row in GateStatus)
+        const leRow = gateRows.find(r => r.gateId === "_LE_STATUS");
+        if (leRow && leRow.leData) {
+          try { setLeStatus(JSON.parse(leRow.leData)); } catch(e) {}
+        }
+
+        // Load video progress data
+        const videoRow = gateRows.find(r => r.gateId === "_VIDEO_DATA");
+        if (videoRow && videoRow.leData) {
+          try { setVideoData(JSON.parse(videoRow.leData)); } catch(e) {}
+        }
       } catch (e) {
         console.error("Failed to load data:", e);
       }
@@ -544,8 +612,10 @@ export default function ATDevelopmentTracker() {
   // const MENTOR_VISIBLE_TABS = ["baseline", "los"];
   // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary"];
   // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates"];
+  // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities"];
+  // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities", "video"];
 
-  const ALL_TABS_LIST = ["baseline", "los", "diary", "gates"];
+  const ALL_TABS_LIST = ["baseline", "los", "diary", "gates", "activities", "video"];
   const VISIBLE_TABS = currentUser.role === "candidate" ? ALL_TABS_LIST : MENTOR_VISIBLE_TABS;
 
   // ── Styles ────────────────────────────────────────────
@@ -866,6 +936,8 @@ export default function ATDevelopmentTracker() {
                 { id: "los", label: `Learning Objectives (${los.length})` },
                 { id: "diary", label: `Diary (${entries.length})` },
                 { id: "gates", label: "Gate Readiness" },
+                { id: "activities", label: `Activities (${Object.values(leStatus).filter(s => s.status === "Complete").length}/${ALL_LEs.length})` },
+                { id: "video", label: "Video Progress" },
               ].filter(t => VISIBLE_TABS.includes(t.id)).map(t => (
                 <button key={t.id} onClick={() => { setTab(t.id); setGateFilter(null); }} style={{
                   padding: "7px 13px", borderRadius: 6, fontSize: 14, fontWeight: 600,
@@ -1636,6 +1708,425 @@ export default function ATDevelopmentTracker() {
                 }}>Save Entry</button>
               </Card>
             </div>
+          );
+        })()}
+
+        {/* ═══ TAB: ACTIVITIES (Learning Experiences) ═══ */}
+        {tab === "activities" && !isSubView && (() => {
+          const totalComplete = Object.values(leStatus).filter(s => s.status === "Complete").length;
+          const totalInProgress = Object.values(leStatus).filter(s => s.status === "In Progress").length;
+
+          const updateLE = (leId, field, value) => {
+            setLeStatus(prev => {
+              const next = { ...prev, [leId]: { ...prev[leId], [field]: value } };
+              // Debounced save to sheet — store all LE statuses as one row
+              if (saveTimerRef.current._le) clearTimeout(saveTimerRef.current._le);
+              saveTimerRef.current._le = setTimeout(() => {
+                apiUpdate("GateStatus", { gateId: "_LE_STATUS", leData: JSON.stringify(next) });
+              }, 1500);
+              return next;
+            });
+          };
+
+          return (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 15, color: "#4a6080", lineHeight: 1.55, marginBottom: 12 }}>
+                  Suggested activities from the AT Program Guide. These are not requirements — mentors may draw on these when designing Learning Objectives, or design entirely their own. Track your progress here.
+                </div>
+
+                {/* Summary */}
+                <div style={{
+                  display: "flex", gap: 16, padding: "12px 14px", marginBottom: 16,
+                  background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 8,
+                  flexWrap: "wrap",
+                }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Complete</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#28a858" }}>{totalComplete}<span style={{ fontSize: 14, color: "#4a6080", fontWeight: 500 }}>/{ALL_LEs.length}</span></div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>In Progress</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#e07830" }}>{totalInProgress}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Not Started</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#4a6080" }}>{ALL_LEs.length - totalComplete - totalInProgress}</div>
+                  </div>
+                </div>
+              </div>
+
+              {Object.entries(LEARNING_EXPERIENCES).map(([modName, mod]) => {
+                const modComplete = mod.items.filter(le => leStatus[le.id]?.status === "Complete").length;
+                return (
+                  <div key={modName} style={{ marginBottom: 24 }}>
+                    <div style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                      marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${mod.color}30`,
+                    }}>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: mod.color }}>{modName}</span>
+                      <span style={{ fontSize: 13, color: "#4a6080" }}>{modComplete}/{mod.items.length} complete</span>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div style={{ height: 3, background: "rgba(255,255,255,0.04)", borderRadius: 2, marginBottom: 10, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${(modComplete / mod.items.length) * 100}%`, background: mod.color, borderRadius: 2, transition: "width 0.4s ease" }} />
+                    </div>
+
+                    {mod.items.map((le, li) => {
+                      const s = leStatus[le.id] || {};
+                      const status = s.status || "Not Started";
+                      const statusColor = status === "Complete" ? "#28a858" : status === "In Progress" ? "#e07830" : "#3d5470";
+                      return (
+                        <div key={le.id} style={{
+                          padding: "12px 14px", marginBottom: 6, borderRadius: 8,
+                          background: status === "Complete" ? "rgba(40,168,88,0.03)" : "rgba(255,255,255,0.02)",
+                          border: `1px solid ${status === "Complete" ? "rgba(40,168,88,0.1)" : "rgba(255,255,255,0.05)"}`,
+                          opacity: status === "Complete" ? 0.7 : 1,
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: mod.color }}>{le.id}</span>
+                                <span style={{ fontSize: 15, fontWeight: 600, color: status === "Complete" ? "#6a8098" : "#c0ccd8", textDecoration: status === "Complete" ? "line-through" : "none" }}>
+                                  {le.title}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.5 }}>
+                                {le.desc}
+                              </div>
+                            </div>
+                            <select
+                              value={status}
+                              onChange={ev => updateLE(le.id, "status", ev.target.value)}
+                              style={{
+                                padding: "5px 6px", fontSize: 12, fontWeight: 700, borderRadius: 5,
+                                background: `${statusColor}15`, border: `1px solid ${statusColor}35`,
+                                color: statusColor, outline: "none", fontFamily: "inherit",
+                                appearance: "auto", cursor: "pointer", flexShrink: 0,
+                              }}
+                            >
+                              <option value="Not Started">Not Started</option>
+                              <option value="In Progress">In Progress</option>
+                              <option value="Complete">Complete</option>
+                            </select>
+                          </div>
+
+                          {/* Completion details — show when In Progress or Complete */}
+                          {status !== "Not Started" && (
+                            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                              <input
+                                type="date"
+                                value={s.date || ""}
+                                onChange={ev => updateLE(le.id, "date", ev.target.value)}
+                                placeholder="Date"
+                                style={{
+                                  padding: "4px 8px", fontSize: 12, color: "#a0b0c0",
+                                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                                  borderRadius: 5, outline: "none", fontFamily: "inherit",
+                                }}
+                              />
+                              <input
+                                value={s.notes || ""}
+                                onChange={ev => updateLE(le.id, "notes", ev.target.value)}
+                                placeholder="Notes — what you did, who was involved, what you learned"
+                                style={{
+                                  flex: 1, minWidth: 180, padding: "4px 8px", fontSize: 12, color: "#a0b0c0",
+                                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                                  borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
+                                }}
+                              />
+                              {s.linkedLO && (
+                                <span style={{ fontSize: 11, color: "#e07830", padding: "4px 8px", borderRadius: 4, background: "rgba(224,120,48,0.08)", border: "1px solid rgba(224,120,48,0.15)" }}>
+                                  → {s.linkedLO}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </>
+          );
+        })()}
+
+        {/* ═══ TAB: VIDEO PROGRESS ═══ */}
+        {tab === "video" && !isSubView && (() => {
+          const skiingMod = GATES["Module 2 — Skiing Performance"];
+          const skiGates = skiingMod ? skiingMod.gates : [];
+          const totalWithVideos = skiGates.filter(g => (videoData[g.id]?.videos || []).length > 0).length;
+
+          const saveVideoData = (newData) => {
+            setVideoData(newData);
+            if (saveTimerRef.current._video) clearTimeout(saveTimerRef.current._video);
+            saveTimerRef.current._video = setTimeout(() => {
+              apiUpdate("GateStatus", { gateId: "_VIDEO_DATA", leData: JSON.stringify(newData) });
+            }, 1500);
+          };
+
+          const updateCues = (gateId, cues) => {
+            saveVideoData({ ...videoData, [gateId]: { ...videoData[gateId], cues, videos: videoData[gateId]?.videos || [] } });
+          };
+
+          const addVideo = (gateId) => {
+            const urlEl = document.getElementById(`vid-url-${gateId}`);
+            const noteEl = document.getElementById(`vid-note-${gateId}`);
+            if (!urlEl) return;
+            const url = urlEl.value.trim();
+            if (!url) return;
+            const note = noteEl ? noteEl.value.trim() : "";
+            const existing = videoData[gateId] || { cues: "", videos: [] };
+            const newVideo = { url, date: today(), notes: note, addedBy: currentUser?.key || "mark", comments: [] };
+            saveVideoData({ ...videoData, [gateId]: { ...existing, videos: [...existing.videos, newVideo] } });
+            urlEl.value = "";
+            if (noteEl) noteEl.value = "";
+          };
+
+          const removeVideo = (gateId, vidIdx) => {
+            const existing = videoData[gateId] || { cues: "", videos: [] };
+            const newVideos = existing.videos.filter((_, i) => i !== vidIdx);
+            saveVideoData({ ...videoData, [gateId]: { ...existing, videos: newVideos } });
+          };
+
+          const addVideoComment = (gateId, vidIdx, text) => {
+            if (!text.trim()) return;
+            const existing = videoData[gateId] || { cues: "", videos: [] };
+            const newVideos = [...existing.videos];
+            const vid = { ...newVideos[vidIdx] };
+            vid.comments = [...(vid.comments || []), { userId: currentUser?.key || "mark", text: text.trim(), timestamp: new Date().toISOString() }];
+            newVideos[vidIdx] = vid;
+            saveVideoData({ ...videoData, [gateId]: { ...existing, videos: newVideos } });
+          };
+
+          // Extract YouTube ID
+          const getYtId = (url) => {
+            const m = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            return m ? m[1] : null;
+          };
+
+          // Group gates by category
+          let lastCategory = null;
+
+          return (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 15, color: "#4a6080", lineHeight: 1.55, marginBottom: 12 }}>
+                  Track your skiing development over time with video. For each task, record your personal cues, upload YouTube videos across the season, and get mentor feedback on each one.
+                </div>
+                <div style={{
+                  display: "flex", gap: 16, padding: "12px 14px", marginBottom: 16,
+                  background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 8,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Tasks with Video</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#3088cc" }}>{totalWithVideos}<span style={{ fontSize: 14, color: "#4a6080", fontWeight: 500 }}>/{skiGates.length}</span></div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Videos</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#e07830" }}>{skiGates.reduce((sum, g) => sum + (videoData[g.id]?.videos || []).length, 0)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {skiGates.map((gate, gi) => {
+                const data = videoData[gate.id] || { cues: "", videos: [] };
+                const videos = data.videos || [];
+                const showCategory = gate.category && gate.category !== lastCategory;
+                if (gate.category) lastCategory = gate.category;
+
+                return (
+                  <div key={gate.id}>
+                    {showCategory && (
+                      <div style={{
+                        padding: "8px 10px 4px", marginTop: gi > 0 ? 14 : 0,
+                        borderBottom: "2px solid rgba(48,136,204,0.25)", marginBottom: 6,
+                      }}>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: "#3088cc", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                          {gate.category}
+                        </span>
+                      </div>
+                    )}
+                    <div style={{
+                      marginBottom: 8, borderRadius: 10,
+                      background: videos.length > 0 ? "rgba(48,136,204,0.03)" : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${videos.length > 0 ? "rgba(48,136,204,0.1)" : "rgba(255,255,255,0.05)"}`,
+                      overflow: "hidden",
+                    }}>
+                      {/* Gate header */}
+                      <div style={{ padding: "12px 14px", borderBottom: videos.length > 0 || data.cues ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#3088cc" }}>{gate.id}</span>
+                          <span style={{ fontSize: 15, fontWeight: 600, color: "#c0ccd8" }}>{gate.criterion}</span>
+                          {videos.length > 0 && (
+                            <span style={{ fontSize: 12, color: "#4a6080", marginLeft: "auto" }}>🎬 {videos.length} video{videos.length !== 1 ? "s" : ""}</span>
+                          )}
+                        </div>
+
+                        {/* Personal cues */}
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={{ fontSize: 11, color: "#506880", fontWeight: 700, display: "block", marginBottom: 3 }}>
+                            My Cues & Focus Points
+                          </label>
+                          <textarea
+                            value={data.cues || ""}
+                            onChange={ev => updateCues(gate.id, ev.target.value)}
+                            placeholder="What do I focus on? Key feelings, timing cues, body positions..."
+                            style={{
+                              width: "100%", minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#a0b0c0",
+                              background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
+                              borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
+                              lineHeight: 1.5, boxSizing: "border-box",
+                            }}
+                          />
+                        </div>
+
+                        {/* Add video */}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <input
+                            id={`vid-url-${gate.id}`}
+                            placeholder="YouTube URL"
+                            style={{
+                              flex: "2 1 180px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
+                              background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                              borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
+                            }}
+                            onKeyDown={ev => { if (ev.key === "Enter") addVideo(gate.id); }}
+                          />
+                          <input
+                            id={`vid-note-${gate.id}`}
+                            placeholder="What to notice in this video"
+                            style={{
+                              flex: "1 1 140px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
+                              background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                              borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
+                            }}
+                            onKeyDown={ev => { if (ev.key === "Enter") addVideo(gate.id); }}
+                          />
+                          <button onClick={() => addVideo(gate.id)} style={{
+                            padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
+                            background: "rgba(48,136,204,0.12)", border: "1px solid rgba(48,136,204,0.3)",
+                            color: "#3088cc", cursor: "pointer", flexShrink: 0,
+                          }}>+ Add</button>
+                        </div>
+                      </div>
+
+                      {/* Video timeline */}
+                      {videos.length > 0 && (
+                        <div style={{ padding: "8px 14px 12px" }}>
+                          {videos.map((vid, vi) => {
+                            const ytId = getYtId(vid.url);
+                            const addedByUser = USERS[vid.addedBy] || { name: vid.addedBy || "?", color: "#7a9ab5" };
+                            return (
+                              <div key={vi} style={{
+                                display: "flex", gap: 10, padding: "10px 0",
+                                borderBottom: vi < videos.length - 1 ? "1px solid rgba(255,255,255,0.03)" : "none",
+                              }}>
+                                {/* Thumbnail */}
+                                {ytId ? (
+                                  <a href={vid.url} target="_blank" rel="noopener noreferrer" style={{
+                                    width: 96, height: 54, borderRadius: 5, overflow: "hidden", flexShrink: 0,
+                                    background: "#000", display: "flex", alignItems: "center", justifyContent: "center",
+                                    position: "relative",
+                                  }}>
+                                    <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                    <div style={{
+                                      position: "absolute", width: 24, height: 17, borderRadius: 4,
+                                      background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center",
+                                    }}>
+                                      <span style={{ fontSize: 9, color: "#fff" }}>▶</span>
+                                    </div>
+                                  </a>
+                                ) : (
+                                  <a href={vid.url} target="_blank" rel="noopener noreferrer" style={{
+                                    width: 96, height: 54, borderRadius: 5, flexShrink: 0,
+                                    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                                    display: "flex", alignItems: "center", justifyContent: "center",
+                                    fontSize: 22, textDecoration: "none",
+                                  }}>🎬</a>
+                                )}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: "#a0b0c0" }}>{vid.date}</span>
+                                    <span style={{ fontSize: 12, color: addedByUser.color, fontWeight: 600 }}>by {addedByUser.name}</span>
+                                    <button onClick={() => { if (confirm("Remove this video?")) removeVideo(gate.id, vi); }} style={{
+                                      marginLeft: "auto", padding: "1px 5px", borderRadius: 3, fontSize: 11,
+                                      background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.12)",
+                                      color: "#b04040", cursor: "pointer",
+                                    }}>✕</button>
+                                  </div>
+                                  {vid.notes && (
+                                    <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 4 }}>{vid.notes}</div>
+                                  )}
+
+                                  {/* Video comments */}
+                                  {(vid.comments || []).map((c, ci) => {
+                                    const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
+                                    return (
+                                      <div key={ci} style={{
+                                        display: "flex", gap: 6, alignItems: "flex-start", marginTop: 4,
+                                        padding: "5px 8px", borderRadius: 5,
+                                        background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)",
+                                      }}>
+                                        <span style={{
+                                          width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                                          background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
+                                          display: "flex", alignItems: "center", justifyContent: "center",
+                                          fontSize: 9, fontWeight: 800, color: commenter.color,
+                                        }}>{commenter.name[0]}</span>
+                                        <div>
+                                          <span style={{ fontSize: 12, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                                          <span style={{ fontSize: 11, color: "#3d5470", marginLeft: 5 }}>
+                                            {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                                          </span>
+                                          <div style={{ fontSize: 13, color: "#a0b0c0", lineHeight: 1.45, marginTop: 2 }}>{c.text}</div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Add comment to video */}
+                                  <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+                                    <input
+                                      id={`vid-comment-${gate.id}-${vi}`}
+                                      placeholder="Comment on this video..."
+                                      style={{
+                                        flex: 1, padding: "4px 8px", fontSize: 12, color: "#a0b0c0",
+                                        background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
+                                        borderRadius: 4, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
+                                      }}
+                                      onKeyDown={ev => {
+                                        if (ev.key === "Enter") {
+                                          const el = document.getElementById(`vid-comment-${gate.id}-${vi}`);
+                                          addVideoComment(gate.id, vi, el.value);
+                                          el.value = "";
+                                        }
+                                      }}
+                                    />
+                                    <button onClick={() => {
+                                      const el = document.getElementById(`vid-comment-${gate.id}-${vi}`);
+                                      addVideoComment(gate.id, vi, el.value);
+                                      el.value = "";
+                                    }} style={{
+                                      padding: "4px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
+                                      background: `${currentUser?.color || "#3088cc"}10`,
+                                      border: `1px solid ${currentUser?.color || "#3088cc"}25`,
+                                      color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
+                                    }}>Post</button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
           );
         })()}
 
