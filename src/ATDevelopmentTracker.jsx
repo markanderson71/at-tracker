@@ -183,52 +183,68 @@ const API_ENABLED = !!API_URL;
 if (API_ENABLED) { console.log("AT Tracker API connected"); }
 else { console.log("AT Tracker API: NOT CONFIGURED — set VITE_SHEETS_API_URL in .env.local or Vercel"); }
 
-// JSONP-style GET for Google Apps Script (avoids CORS redirect issue)
+// Google Apps Script fetch helper
+// Uses Google's redirect-friendly approach: GET via script tag, POST via sendBeacon
 function apiGet(sheetName) {
   if (!API_ENABLED) return Promise.resolve([]);
   return new Promise((resolve) => {
-    const callbackName = "_cb_" + Math.random().toString(36).slice(2, 8);
-    const url = `${API_URL}?action=getAll&sheet=${encodeURIComponent(sheetName)}&callback=${callbackName}`;
+    const cbName = "_gscb_" + Math.random().toString(36).slice(2, 8);
+    const url = `${API_URL}?action=getAll&sheet=${encodeURIComponent(sheetName)}&callback=${cbName}&_t=${Date.now()}`;
 
-    window[callbackName] = (data) => {
-      delete window[callbackName];
-      document.body.removeChild(script);
+    // Register global callback
+    window[cbName] = (data) => {
+      cleanup();
+      console.log(`Loaded ${sheetName}:`, (data.rows || []).length, "rows");
       resolve(data.rows || []);
     };
 
     const script = document.createElement("script");
     script.src = url;
-    script.onerror = () => {
-      delete window[callbackName];
-      document.body.removeChild(script);
-      console.error("API GET error for", sheetName);
-      resolve([]);
+
+    const cleanup = () => {
+      delete window[cbName];
+      try { if (script.parentNode) script.parentNode.removeChild(script); } catch(e) {}
     };
+
+    script.onerror = (err) => {
+      console.error("JSONP script error for", sheetName, err);
+      cleanup();
+      // Fallback: try regular fetch
+      fetch(url.replace(`&callback=${cbName}`, ""))
+        .then(r => r.json())
+        .then(data => { console.log(`Fallback loaded ${sheetName}:`, (data.rows||[]).length, "rows"); resolve(data.rows || []); })
+        .catch(e2 => { console.error("Fallback also failed for", sheetName, e2); resolve([]); });
+    };
+
     document.body.appendChild(script);
 
-    // Timeout fallback
+    // Timeout
     setTimeout(() => {
-      if (window[callbackName]) {
-        delete window[callbackName];
-        try { document.body.removeChild(script); } catch(e) {}
-        console.error("API GET timeout for", sheetName);
-        resolve([]);
+      if (window[cbName]) {
+        console.error("JSONP timeout for", sheetName, "- trying fallback fetch");
+        cleanup();
+        fetch(`${API_URL}?action=getAll&sheet=${encodeURIComponent(sheetName)}`)
+          .then(r => r.json())
+          .then(data => resolve(data.rows || []))
+          .catch(() => resolve([]));
       }
-    }, 10000);
+    }, 8000);
   });
 }
 
-// POST via form submission in hidden iframe (avoids CORS for writes)
+// POST via sendBeacon or fetch with no-cors
 async function apiPost(action, sheetName, rowData, id) {
   if (!API_ENABLED) return;
   try {
     let url = `${API_URL}?action=${action}&sheet=${encodeURIComponent(sheetName)}`;
     if (id) url += `&id=${encodeURIComponent(id)}`;
 
-    // Use navigator.sendBeacon for fire-and-forget, or fetch with no-cors
     const body = JSON.stringify(rowData || {});
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(url, body);
+      const sent = navigator.sendBeacon(url, new Blob([body], { type: "text/plain" }));
+      if (!sent) {
+        await fetch(url, { method: "POST", mode: "no-cors", body });
+      }
     } else {
       await fetch(url, { method: "POST", mode: "no-cors", body });
     }
