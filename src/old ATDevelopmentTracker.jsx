@@ -227,11 +227,10 @@ const USERS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// API CONFIG — Set your API URL here or via environment variables
+// API CONFIG — Set VITE_SHEETS_API_URL in .env.local or Vercel Environment Variables
 // ═══════════════════════════════════════════════════════════════════════
-// For Vercel/Vite: set VITE_SHEETS_API_URL in .env.local or Vercel Environment Variables
-// For preview: app runs with no API (data stays in memory only)
-const API_URL = (typeof window !== "undefined" && window.__AT_API_URL__) || "";
+let API_URL = "";
+try { API_URL = import.meta.env.VITE_SHEETS_API_URL || ""; } catch(e) {}
 
 const API_ENABLED = !!API_URL;
 
@@ -325,13 +324,7 @@ export default function ATDevelopmentTracker() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [diaryFilter, setDiaryFilter] = useState("all");
   const [leStatus, setLeStatus] = useState({});
-  const [videoData, setVideoData] = useState({});
-  const [baselineComments, setBaselineComments] = useState({});
-  const [expandedBaselineGate, setExpandedBaselineGate] = useState(null);
-  const [catFilter, setCatFilter] = useState("all");
-  const [compareMode, setCompareMode] = useState(false);
-  const [compareA, setCompareA] = useState(null);
-  const [compareB, setCompareB] = useState(null);
+  const [videoData, setVideoData] = useState({}); // { "SK-G1": { cues: "...", videos: [{ url, date, notes, comments: [] }] } } // { "LE-MA1": { status: "Complete", date: "...", notes: "..." }, ... } // all | attention | unread
   const saveTimerRef = useRef({});
 
   // ── Load data from Google Sheets on mount ─────────────
@@ -414,12 +407,6 @@ export default function ATDevelopmentTracker() {
         const videoRow = gateRows.find(r => r.gateId === "_VIDEO_DATA");
         if (videoRow && videoRow.leData) {
           try { setVideoData(JSON.parse(videoRow.leData)); } catch(e) {}
-        }
-
-        // Load baseline comments
-        const blcRow = gateRows.find(r => r.gateId === "_BASELINE_COMMENTS");
-        if (blcRow && blcRow.leData) {
-          try { setBaselineComments(JSON.parse(blcRow.leData)); } catch(e) {}
         }
       } catch (e) {
         console.error("Failed to load data:", e);
@@ -628,7 +615,7 @@ export default function ATDevelopmentTracker() {
   // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities"];
   // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities", "video"];
 
-  const ALL_TABS_LIST = ["baseline", "los", "diary", "gates", "activities", "video", "timeline"];
+  const ALL_TABS_LIST = ["baseline", "los", "diary", "gates", "activities", "video"];
   const VISIBLE_TABS = currentUser.role === "candidate" ? ALL_TABS_LIST : MENTOR_VISIBLE_TABS;
 
   // ── Styles ────────────────────────────────────────────
@@ -951,7 +938,6 @@ export default function ATDevelopmentTracker() {
                 { id: "gates", label: "Gate Readiness" },
                 { id: "activities", label: `Activities (${Object.values(leStatus).filter(s => s.status === "Complete").length}/${ALL_LEs.length})` },
                 { id: "video", label: "Video Progress" },
-                { id: "timeline", label: "Timeline" },
               ].filter(t => VISIBLE_TABS.includes(t.id)).map(t => (
                 <button key={t.id} onClick={() => { setTab(t.id); setGateFilter(null); }} style={{
                   padding: "7px 13px", borderRadius: 6, fontSize: 14, fontWeight: 600,
@@ -1888,18 +1874,15 @@ export default function ATDevelopmentTracker() {
           const addVideo = (gateId) => {
             const urlEl = document.getElementById(`vid-url-${gateId}`);
             const noteEl = document.getElementById(`vid-note-${gateId}`);
-            const dateEl = document.getElementById(`vid-date-${gateId}`);
             if (!urlEl) return;
             const url = urlEl.value.trim();
             if (!url) return;
             const note = noteEl ? noteEl.value.trim() : "";
-            const date = dateEl ? dateEl.value : today();
             const existing = videoData[gateId] || { cues: "", videos: [] };
-            const newVideo = { url, date: date || today(), notes: note, addedBy: currentUser?.key || "mark", comments: [] };
+            const newVideo = { url, date: today(), notes: note, addedBy: currentUser?.key || "mark", comments: [] };
             saveVideoData({ ...videoData, [gateId]: { ...existing, videos: [...existing.videos, newVideo] } });
             urlEl.value = "";
             if (noteEl) noteEl.value = "";
-            if (dateEl) dateEl.value = today();
           };
 
           const removeVideo = (gateId, vidIdx) => {
@@ -2001,22 +1984,12 @@ export default function ATDevelopmentTracker() {
                         </div>
 
                         {/* Add video */}
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <input
-                            id={`vid-date-${gate.id}`}
-                            type="date"
-                            defaultValue={today()}
-                            style={{
-                              padding: "6px 8px", fontSize: 13, color: "#e0e8f0",
-                              background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-                              borderRadius: 5, outline: "none", fontFamily: "inherit",
-                            }}
-                          />
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           <input
                             id={`vid-url-${gate.id}`}
                             placeholder="YouTube URL"
                             style={{
-                              flex: "2 1 160px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
+                              flex: "2 1 180px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
                               background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                               borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
                             }}
@@ -2024,7 +1997,7 @@ export default function ATDevelopmentTracker() {
                           />
                           <input
                             id={`vid-note-${gate.id}`}
-                            placeholder="What was your focus?"
+                            placeholder="What to notice in this video"
                             style={{
                               flex: "1 1 140px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
                               background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
@@ -2076,24 +2049,8 @@ export default function ATDevelopmentTracker() {
                                 )}
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                                    <span style={{ fontSize: 14, fontWeight: 700, color: "#c0ccd8" }}>{vid.date}</span>
-                                    <span style={{ fontSize: 13, color: addedByUser.color, fontWeight: 600 }}>by {addedByUser.name}</span>
-                                    {/* 💬 expand button */}
-                                    <button
-                                      onClick={() => {
-                                        const key = `${gate.id}-${vi}`;
-                                        setExpandedBaselineGate(expandedBaselineGate === key ? null : key);
-                                      }}
-                                      style={{
-                                        padding: "2px 8px", borderRadius: 4, cursor: "pointer",
-                                        background: (vid.comments || []).length > 0 ? "rgba(40,168,88,0.1)" : "rgba(255,255,255,0.02)",
-                                        border: `1px solid ${(vid.comments || []).length > 0 ? "rgba(40,168,88,0.25)" : "rgba(255,255,255,0.06)"}`,
-                                        color: (vid.comments || []).length > 0 ? "#28a858" : "#3d5470",
-                                        fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 2,
-                                      }}
-                                    >
-                                      💬 {(vid.comments || []).length > 0 ? (vid.comments || []).length : ""}
-                                    </button>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: "#a0b0c0" }}>{vid.date}</span>
+                                    <span style={{ fontSize: 12, color: addedByUser.color, fontWeight: 600 }}>by {addedByUser.name}</span>
                                     <button onClick={() => { if (confirm("Remove this video?")) removeVideo(gate.id, vi); }} style={{
                                       marginLeft: "auto", padding: "1px 5px", borderRadius: 3, fontSize: 11,
                                       background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.12)",
@@ -2104,84 +2061,61 @@ export default function ATDevelopmentTracker() {
                                     <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 4 }}>{vid.notes}</div>
                                   )}
 
-                                  {/* Expandable comment thread — same pattern as baseline */}
-                                  {expandedBaselineGate === `${gate.id}-${vi}` && (
-                                    <div style={{
-                                      marginTop: 8, padding: "10px 12px",
-                                      background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.04)",
-                                      borderRadius: 8,
-                                    }}>
-                                      {(vid.comments || []).length === 0 && (
-                                        <div style={{ fontSize: 13, color: "#3d5470", marginBottom: 8, fontStyle: "italic" }}>
-                                          No comments yet — mentors can leave feedback on this video.
-                                        </div>
-                                      )}
-                                      {(vid.comments || []).map((c, ci) => {
-                                        const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
-                                        return (
-                                          <div key={ci} style={{
-                                            display: "flex", gap: 8, marginBottom: 8,
-                                            padding: "8px 10px", borderRadius: 6,
-                                            background: `${commenter.color}06`, border: `1px solid ${commenter.color}12`,
-                                          }}>
-                                            <div style={{
-                                              width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
-                                              background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
-                                              display: "flex", alignItems: "center", justifyContent: "center",
-                                              fontSize: 11, fontWeight: 800, color: commenter.color,
-                                            }}>{commenter.name[0]}</div>
-                                            <div style={{ flex: 1 }}>
-                                              <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
-                                                <span style={{ fontSize: 13, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
-                                                <span style={{ fontSize: 11, color: "#3d5470" }}>
-                                                  {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
-                                                  {c.timestamp ? " · " + new Date(c.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                                                </span>
-                                              </div>
-                                              <div style={{ fontSize: 14, color: "#b0bcc8", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                      <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                                        <div style={{
-                                          width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
-                                          background: `${currentUser?.color || "#7a9ab5"}20`,
-                                          border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
+                                  {/* Video comments */}
+                                  {(vid.comments || []).map((c, ci) => {
+                                    const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
+                                    return (
+                                      <div key={ci} style={{
+                                        display: "flex", gap: 6, alignItems: "flex-start", marginTop: 4,
+                                        padding: "5px 8px", borderRadius: 5,
+                                        background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)",
+                                      }}>
+                                        <span style={{
+                                          width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                                          background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
                                           display: "flex", alignItems: "center", justifyContent: "center",
-                                          fontSize: 11, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
-                                        }}>{currentUser?.name?.[0] || "?"}</div>
-                                        <textarea
-                                          id={`vid-comment-${gate.id}-${vi}`}
-                                          placeholder="Leave feedback on this video..."
-                                          style={{
-                                            flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#c0ccd8",
-                                            background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
-                                            borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
-                                            lineHeight: 1.5, boxSizing: "border-box",
-                                          }}
-                                          onKeyDown={ev => {
-                                            if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-                                              const el = document.getElementById(`vid-comment-${gate.id}-${vi}`);
-                                              addVideoComment(gate.id, vi, el.value);
-                                              el.value = "";
-                                            }
-                                          }}
-                                        />
-                                        <button onClick={() => {
+                                          fontSize: 9, fontWeight: 800, color: commenter.color,
+                                        }}>{commenter.name[0]}</span>
+                                        <div>
+                                          <span style={{ fontSize: 12, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                                          <span style={{ fontSize: 11, color: "#3d5470", marginLeft: 5 }}>
+                                            {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                                          </span>
+                                          <div style={{ fontSize: 13, color: "#a0b0c0", lineHeight: 1.45, marginTop: 2 }}>{c.text}</div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Add comment to video */}
+                                  <div style={{ display: "flex", gap: 5, marginTop: 5 }}>
+                                    <input
+                                      id={`vid-comment-${gate.id}-${vi}`}
+                                      placeholder="Comment on this video..."
+                                      style={{
+                                        flex: 1, padding: "4px 8px", fontSize: 12, color: "#a0b0c0",
+                                        background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
+                                        borderRadius: 4, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
+                                      }}
+                                      onKeyDown={ev => {
+                                        if (ev.key === "Enter") {
                                           const el = document.getElementById(`vid-comment-${gate.id}-${vi}`);
                                           addVideoComment(gate.id, vi, el.value);
                                           el.value = "";
-                                        }} style={{
-                                          padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
-                                          background: `${currentUser?.color || "#3088cc"}12`,
-                                          border: `1px solid ${currentUser?.color || "#3088cc"}30`,
-                                          color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
-                                        }}>Post</button>
-                                      </div>
-                                      <div style={{ fontSize: 11, color: "#2a3c50", marginTop: 3 }}>Ctrl+Enter to post</div>
-                                    </div>
-                                  )}
+                                        }
+                                      }}
+                                    />
+                                    <button onClick={() => {
+                                      const el = document.getElementById(`vid-comment-${gate.id}-${vi}`);
+                                      addVideoComment(gate.id, vi, el.value);
+                                      el.value = "";
+                                    }} style={{
+                                      padding: "4px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600,
+                                      background: `${currentUser?.color || "#3088cc"}10`,
+                                      border: `1px solid ${currentUser?.color || "#3088cc"}25`,
+                                      color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
+                                    }}>Post</button>
+                                  </div>
                                 </div>
                               </div>
                             );
@@ -2192,210 +2126,6 @@ export default function ATDevelopmentTracker() {
                   </div>
                 );
               })}
-            </>
-          );
-        })()}
-
-        {/* ═══ TAB: TIMELINE ═══ */}
-        {tab === "timeline" && !isSubView && (() => {
-          const skiingMod = GATES["Module 2 — Skiing Performance"];
-          const skiGates = skiingMod ? skiingMod.gates : [];
-
-          // Collect all videos with their task info into a flat list
-          const allVideos = [];
-          skiGates.forEach(gate => {
-            const data = videoData[gate.id] || { cues: "", videos: [] };
-            (data.videos || []).forEach((vid, vi) => {
-              allVideos.push({ ...vid, gateId: gate.id, criterion: gate.criterion, category: gate.category, vidIdx: vi });
-            });
-          });
-
-          // Sort by date descending
-          const sorted = [...allVideos].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-
-          // Get unique categories for filtering
-          const categories = [...new Set(skiGates.map(g => g.category).filter(Boolean))];
-
-          const filtered = catFilter === "all" ? sorted : sorted.filter(v => v.category === catFilter);
-
-          const getYtId = (url) => {
-            const m = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-            return m ? m[1] : null;
-          };
-
-          const VideoCard = ({ vid, selectable, selected, onSelect }) => {
-            const ytId = getYtId(vid.url);
-            const addedByUser = USERS[vid.addedBy] || { name: vid.addedBy || "?", color: "#7a9ab5" };
-            const gateColor = vid.gateId.startsWith("SK") ? "#3088cc" : "#7a9ab5";
-            return (
-              <div
-                onClick={() => selectable && onSelect && onSelect(vid)}
-                style={{
-                  padding: "12px", borderRadius: 8,
-                  background: selected ? "rgba(48,136,204,0.08)" : "rgba(255,255,255,0.02)",
-                  border: `1.5px solid ${selected ? "rgba(48,136,204,0.35)" : "rgba(255,255,255,0.05)"}`,
-                  cursor: selectable ? "pointer" : "default",
-                  transition: "border-color 0.15s ease",
-                }}
-              >
-                <div style={{ display: "flex", gap: 10 }}>
-                  {ytId ? (
-                    <a href={vid.url} target="_blank" rel="noopener noreferrer" onClick={e => { if (selectable) e.preventDefault(); }} style={{
-                      width: 120, height: 68, borderRadius: 5, overflow: "hidden", flexShrink: 0,
-                      background: "#000", display: "flex", alignItems: "center", justifyContent: "center", position: "relative",
-                    }}>
-                      <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      <div style={{ position: "absolute", width: 28, height: 20, borderRadius: 4, background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: 10, color: "#fff" }}>▶</span>
-                      </div>
-                    </a>
-                  ) : (
-                    <div style={{ width: 120, height: 68, borderRadius: 5, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>🎬</div>
-                  )}
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "#c0ccd8" }}>{vid.date}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: gateColor, padding: "1px 6px", borderRadius: 3, background: `${gateColor}12`, border: `1px solid ${gateColor}20` }}>{vid.gateId}</span>
-                      <span style={{ fontSize: 13, color: "#6a8098" }}>{vid.criterion}</span>
-                    </div>
-                    {vid.notes && <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 3 }}>{vid.notes}</div>}
-                    <div style={{ fontSize: 12, color: addedByUser.color }}>by {addedByUser.name}</div>
-                    {(vid.comments || []).length > 0 && (
-                      <div style={{ fontSize: 12, color: "#28a858", marginTop: 3 }}>💬 {vid.comments.length} comment{vid.comments.length !== 1 ? "s" : ""}</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          };
-
-          return (
-            <>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 15, color: "#4a6080", lineHeight: 1.55, marginBottom: 12 }}>
-                  All skiing videos across all tasks, sorted by date. Use comparison mode to view two videos side by side.
-                </div>
-
-                {/* Controls */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-                  {/* Category filter */}
-                  <select
-                    value={catFilter}
-                    onChange={ev => setCatFilter(ev.target.value)}
-                    style={{
-                      padding: "6px 10px", fontSize: 13, fontWeight: 600, borderRadius: 6,
-                      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
-                      color: "#a0b0c0", outline: "none", fontFamily: "inherit", appearance: "auto", cursor: "pointer",
-                    }}
-                  >
-                    <option value="all">All Categories</option>
-                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-
-                  {/* Compare toggle */}
-                  <button
-                    onClick={() => { setCompareMode(!compareMode); setCompareA(null); setCompareB(null); }}
-                    style={{
-                      padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: "pointer",
-                      background: compareMode ? "rgba(48,136,204,0.15)" : "rgba(255,255,255,0.03)",
-                      border: `1.5px solid ${compareMode ? "rgba(48,136,204,0.4)" : "rgba(255,255,255,0.08)"}`,
-                      color: compareMode ? "#5ab0e0" : "#6a8098",
-                    }}
-                  >
-                    {compareMode ? "✕ Exit Compare" : "⇆ Compare Two Videos"}
-                  </button>
-
-                  <span style={{ fontSize: 13, color: "#4a6080", marginLeft: "auto" }}>{filtered.length} video{filtered.length !== 1 ? "s" : ""}</span>
-                </div>
-              </div>
-
-              {/* Compare mode instruction */}
-              {compareMode && (!compareA || !compareB) && (
-                <div style={{
-                  padding: "10px 14px", marginBottom: 14, borderRadius: 8,
-                  background: "rgba(48,136,204,0.06)", border: "1px solid rgba(48,136,204,0.15)",
-                  fontSize: 14, color: "#5ab0e0",
-                }}>
-                  {!compareA ? "Select the first video to compare" : "Now select the second video"}
-                </div>
-              )}
-
-              {/* Side-by-side comparison */}
-              {compareMode && compareA && compareB && (
-                <div style={{
-                  display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20,
-                  padding: "14px", borderRadius: 10,
-                  background: "rgba(48,136,204,0.04)", border: "1px solid rgba(48,136,204,0.12)",
-                }}>
-                  {[compareA, compareB].map((vid, si) => {
-                    const ytId = getYtId(vid.url);
-                    const gateData = videoData[vid.gateId] || {};
-                    return (
-                      <div key={si}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: "#3088cc", marginBottom: 4 }}>{vid.gateId} — {vid.criterion}</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: "#c0ccd8", marginBottom: 6 }}>{vid.date}</div>
-                        {ytId && (
-                          <a href={vid.url} target="_blank" rel="noopener noreferrer" style={{
-                            display: "block", width: "100%", aspectRatio: "16/9", borderRadius: 6, overflow: "hidden",
-                            background: "#000", marginBottom: 8, position: "relative",
-                          }}>
-                            <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 36, height: 25, borderRadius: 5, background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <span style={{ fontSize: 12, color: "#fff" }}>▶</span>
-                            </div>
-                          </a>
-                        )}
-                        {vid.notes && <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 6 }}>{vid.notes}</div>}
-                        {gateData.cues && (
-                          <div style={{ fontSize: 12, color: "#506880", padding: "6px 8px", borderRadius: 5, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", marginBottom: 6 }}>
-                            <span style={{ fontWeight: 700, color: "#6a8098" }}>Cues: </span>{gateData.cues}
-                          </div>
-                        )}
-                        {(vid.comments || []).map((c, ci) => {
-                          const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
-                          return (
-                            <div key={ci} style={{ display: "flex", gap: 5, alignItems: "flex-start", marginBottom: 4 }}>
-                              <span style={{ width: 16, height: 16, borderRadius: "50%", background: `${commenter.color}20`, border: `1px solid ${commenter.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: commenter.color, flexShrink: 0 }}>{commenter.name[0]}</span>
-                              <div style={{ fontSize: 12, color: "#a0b0c0", lineHeight: 1.4 }}>
-                                <strong style={{ color: commenter.color }}>{commenter.name}</strong> {c.text}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Video list */}
-              {filtered.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "50px 20px", color: "#2a3c50" }}>
-                  <div style={{ fontSize: 35, marginBottom: 8, opacity: 0.4 }}>🎬</div>
-                  <div style={{ fontSize: 17, fontWeight: 600, color: "#4a6080" }}>No videos yet</div>
-                  <div style={{ fontSize: 15, color: "#2a3c50", marginTop: 4 }}>Add videos in the Video Progress tab to see them here.</div>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {filtered.map((vid, vi) => {
-                    const isA = compareA && compareA.url === vid.url && compareA.gateId === vid.gateId && compareA.date === vid.date;
-                    const isB = compareB && compareB.url === vid.url && compareB.gateId === vid.gateId && compareB.date === vid.date;
-                    return (
-                      <VideoCard
-                        key={`${vid.gateId}-${vi}`}
-                        vid={vid}
-                        selectable={compareMode}
-                        selected={isA || isB}
-                        onSelect={(v) => {
-                          if (!compareA) setCompareA(v);
-                          else if (!compareB && !(compareA.url === v.url && compareA.gateId === v.gateId && compareA.date === v.date)) setCompareB(v);
-                          else { setCompareA(v); setCompareB(null); }
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              )}
             </>
           );
         })()}
@@ -2469,7 +2199,7 @@ export default function ATDevelopmentTracker() {
 
                     {/* Column headers */}
                     <div style={{
-                      display: "grid", gridTemplateColumns: "1fr 42px 42px 42px 42px 36px",
+                      display: "grid", gridTemplateColumns: "1fr 42px 42px 42px 42px 1fr",
                       gap: 4, padding: "6px 8px", marginBottom: 2,
                       background: "rgba(255,255,255,0.02)", borderRadius: 6,
                     }}>
@@ -2478,7 +2208,7 @@ export default function ATDevelopmentTracker() {
                       <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Chris</span>
                       <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Gates</span>
                       <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Mike</span>
-                      <span style={{ fontSize: 12, color: "#4a6080", fontWeight: 700, textAlign: "center" }}>💬</span>
+                      <span style={{ fontSize: 12, color: "#4a6080", fontWeight: 700 }}>Notes</span>
                     </div>
 
                     {mod.gates.map((gate, gi) => {
@@ -2531,7 +2261,7 @@ export default function ATDevelopmentTracker() {
                             </div>
                           )}
                           <div style={{
-                            display: "grid", gridTemplateColumns: "1fr 42px 42px 42px 42px 36px",
+                            display: "grid", gridTemplateColumns: "1fr 42px 42px 42px 42px 1fr",
                             gap: 4, padding: "6px 8px", alignItems: "center",
                             background: gi % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)",
                             borderRadius: 4,
@@ -2544,108 +2274,17 @@ export default function ATDevelopmentTracker() {
                           {scoreSelect("chris", scores.chris)}
                           {scoreSelect("gates", scores.gates)}
                           {scoreSelect("mike", scores.mike)}
-                          <button
-                            onClick={() => setExpandedBaselineGate(expandedBaselineGate === gate.id ? null : gate.id)}
+                          <input
+                            value={note}
+                            onChange={ev => updateNote(ev.target.value)}
+                            placeholder="Priority / notes"
                             style={{
-                              width: 36, height: 28, borderRadius: 5, cursor: "pointer",
-                              background: (baselineComments[gate.id] || []).length > 0 ? "rgba(40,168,88,0.1)" : "rgba(255,255,255,0.02)",
-                              border: `1px solid ${(baselineComments[gate.id] || []).length > 0 ? "rgba(40,168,88,0.25)" : "rgba(255,255,255,0.06)"}`,
-                              color: (baselineComments[gate.id] || []).length > 0 ? "#28a858" : "#3d5470",
-                              fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 2,
+                              width: "100%", padding: "4px 6px", fontSize: 13, color: "#a0b0c0",
+                              background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
+                              borderRadius: 4, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
                             }}
-                          >
-                            💬 {(baselineComments[gate.id] || []).length > 0 ? (baselineComments[gate.id] || []).length : ""}
-                          </button>
+                          />
                         </div>
-
-                        {/* Expandable comment thread */}
-                        {expandedBaselineGate === gate.id && (
-                          <div style={{
-                            margin: "0 8px 8px", padding: "12px",
-                            background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.04)",
-                            borderRadius: 8,
-                          }}>
-                            {(baselineComments[gate.id] || []).length === 0 && (
-                              <div style={{ fontSize: 13, color: "#3d5470", marginBottom: 10, fontStyle: "italic" }}>
-                                No notes yet — add observations about this criterion.
-                              </div>
-                            )}
-                            {(baselineComments[gate.id] || []).map((c, ci) => {
-                              const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
-                              return (
-                                <div key={ci} style={{
-                                  display: "flex", gap: 8, marginBottom: 8,
-                                  padding: "8px 10px", borderRadius: 6,
-                                  background: `${commenter.color}06`,
-                                  border: `1px solid ${commenter.color}12`,
-                                }}>
-                                  <div style={{
-                                    width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
-                                    background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                    fontSize: 11, fontWeight: 800, color: commenter.color,
-                                  }}>{commenter.name[0]}</div>
-                                  <div style={{ flex: 1 }}>
-                                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
-                                      <span style={{ fontSize: 13, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
-                                      <span style={{ fontSize: 11, color: "#3d5470" }}>
-                                        {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
-                                      </span>
-                                    </div>
-                                    <div style={{ fontSize: 14, color: "#b0bcc8", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                            <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                              <div style={{
-                                width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
-                                background: `${currentUser?.color || "#7a9ab5"}20`,
-                                border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                fontSize: 11, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
-                              }}>{currentUser?.name?.[0] || "?"}</div>
-                              <textarea
-                                id={`bl-comment-${gate.id}`}
-                                placeholder="Add a note about this criterion..."
-                                style={{
-                                  flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#c0ccd8",
-                                  background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
-                                  borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
-                                  lineHeight: 1.5, boxSizing: "border-box",
-                                }}
-                                onKeyDown={ev => {
-                                  if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-                                    const el = document.getElementById(`bl-comment-${gate.id}`);
-                                    const text = el.value.trim();
-                                    if (!text) return;
-                                    const newComments = [...(baselineComments[gate.id] || []), { userId: currentUser?.key, text, timestamp: new Date().toISOString() }];
-                                    const updated = { ...baselineComments, [gate.id]: newComments };
-                                    setBaselineComments(updated);
-                                    apiUpdate("GateStatus", { gateId: "_BASELINE_COMMENTS", leData: JSON.stringify(updated) });
-                                    el.value = "";
-                                  }
-                                }}
-                              />
-                              <button onClick={() => {
-                                const el = document.getElementById(`bl-comment-${gate.id}`);
-                                const text = el.value.trim();
-                                if (!text) return;
-                                const newComments = [...(baselineComments[gate.id] || []), { userId: currentUser?.key, text, timestamp: new Date().toISOString() }];
-                                const updated = { ...baselineComments, [gate.id]: newComments };
-                                setBaselineComments(updated);
-                                apiUpdate("GateStatus", { gateId: "_BASELINE_COMMENTS", leData: JSON.stringify(updated) });
-                                el.value = "";
-                              }} style={{
-                                padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
-                                background: `${currentUser?.color || "#3088cc"}12`,
-                                border: `1px solid ${currentUser?.color || "#3088cc"}30`,
-                                color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
-                              }}>Post</button>
-                            </div>
-                            <div style={{ fontSize: 11, color: "#2a3c50", marginTop: 3 }}>Ctrl+Enter to post</div>
-                          </div>
-                        )}
                         </div>
                       );
                     })}
