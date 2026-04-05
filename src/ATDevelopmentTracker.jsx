@@ -618,7 +618,7 @@ export default function ATDevelopmentTracker() {
 
   // Mark sees all tabs; mentors see only what's been rolled out
   // ── ROLLOUT CONTROL: add tab ids here as you introduce them ──
-  const MENTOR_VISIBLE_TABS = ["baseline", "diary"];
+  const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities", "video", "timeline"];
   // ROLLOUT OPTIONS — copy/paste the line you want:
   // const MENTOR_VISIBLE_TABS = ["baseline"];
   // const MENTOR_VISIBLE_TABS = ["baseline", "diary"];
