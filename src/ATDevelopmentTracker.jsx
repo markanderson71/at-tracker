@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { SHEETS_API_URL as _configUrl } from "./config";
 
 // ═══════════════════════════════════════════════════════════════════════
 // DATA — Pre-loaded from AT Dev Plan v5
@@ -227,11 +228,9 @@ const USERS = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// API CONFIG — Set your API URL here or via environment variables
+// API CONFIG
 // ═══════════════════════════════════════════════════════════════════════
-// For Vercel/Vite: set VITE_SHEETS_API_URL in .env.local or Vercel Environment Variables
-// For preview: app runs with no API (data stays in memory only)
-const API_URL = (typeof window !== "undefined" && window.__AT_API_URL__) || "";
+const API_URL = _configUrl || "";
 
 const API_ENABLED = !!API_URL;
 
