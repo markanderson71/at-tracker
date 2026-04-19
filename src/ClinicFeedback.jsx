@@ -1,635 +1,416 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 // ═══════════════════════════════════════════════════════════════════════
-// CLINIC FEEDBACK — Participant Form + Assessor Review
-// ═══════════════════════════════════════════════════════════════════════
+// CLINIC FEEDBACK — Anonymous participant feedback for Mark's clinics
 //
-// Two modes:
-//   1. PARTICIPANT MODE (default) — mobile-friendly feedback form
-//      accessed via QR code. No login, no complexity.
-//   2. REVIEW MODE — Mark + assessors see all responses, aggregated
-//      scores, and can add their own evaluative notes.
-//
-// Toggle between modes with the lock icon in the header.
+// PARTICIPANT VIEW: form → thank you (no access to other responses)
+// TRAINER VIEW: setup session → QR code (accessed via "I'm the trainer" link)
+// REVIEW: only in main tracker app (not here)
 // ═══════════════════════════════════════════════════════════════════════
 
 const QUESTIONS = [
-  {
-    id: "communicate",
-    text: "Did the trainer clearly communicate what we were working on and why it mattered?",
-    shortLabel: "Clear Communication of LOs",
-    gateRef: "CL-G1, CL-G5",
-  },
-  {
-    id: "adapt",
-    text: "Did the trainer adapt to what our group needed?",
-    shortLabel: "Adapted to Group Needs",
-    gateRef: "CL-G3, CL-G7",
-  },
-  {
-    id: "feedback",
-    text: "Was the feedback you received helpful and well-timed?",
-    shortLabel: "Helpful & Timely Feedback",
-    gateRef: "CL-G8",
-  },
-  {
-    id: "safety",
-    text: "Did the trainer exude situational awareness and promote an environment that managed physical and emotional risk?",
-    shortLabel: "Situational Awareness & Safety",
-    gateRef: "SK-G22 (moved to participant feedback)",
-  },
+  { id: "communication", text: "Was it clear what we were working on today and why?", shortLabel: "Clear Communication", gateRef: "CL-G1, CL-G5" },
+  { id: "adapt", text: "Did the trainer adjust the session to fit what our group needed?", shortLabel: "Adapted to Group", gateRef: "CL-G3, CL-G7" },
+  { id: "feedback_quality", text: "Was the feedback you received useful and easy to apply?", shortLabel: "Useful Feedback", gateRef: "CL-G8" },
+  { id: "safety", text: "Did you feel safe — both physically on the mountain and comfortable asking questions?", shortLabel: "Safety & Comfort", gateRef: "CL-G6, CL-G11" },
+  { id: "engagement", text: "Did the trainer encourage everyone to participate and share their thoughts?", shortLabel: "Group Participation", gateRef: "CL-G5, CL-G11" },
+  { id: "learning", text: "Do you feel you improved or learned something valuable today?", shortLabel: "I Learned Something", gateRef: "CL-G1, CL-G4, CL-G9" },
 ];
 
-const SLIDER_LABELS = {
-  1: "Not at all",
-  5: "Somewhat",
-  10: "Absolutely",
-};
-
+const SLIDER_LABELS = { 1: "Not at all", 3: "A little", 5: "Somewhat", 7: "Mostly", 10: "Absolutely" };
 const uid = () => Math.random().toString(36).slice(2, 9);
 
-// ── QR Code generator (simple SVG-based) ─────────────────────────────
-// Uses a basic QR-like visual. In production, you'd use a real QR library.
-// For now we show the URL prominently + a placeholder QR pattern.
+function getApiUrl() {
+  return (typeof window !== "undefined" && window.__AT_API_URL__) || "";
+}
 
-const QRPlaceholder = ({ url }) => {
-  // Generate a deterministic pattern from URL
+async function saveFeedback(data) {
+  const url = getApiUrl();
+  if (!url) { console.log("No API — feedback not persisted"); return; }
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ ...data, _action: "create", _sheet: "ClinicFeedback" }),
+    });
+  } catch (e) { console.error("Save feedback error:", e); }
+}
+
+async function loadSessionConfig() {
+  const url = getApiUrl();
+  if (!url) return null;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ _action: "getAll", _sheet: "ClinicFeedback" }),
+    });
+    const data = await res.json();
+    const rows = data.rows || [];
+    const configRow = rows.find(r => r.id === "_SESSION_CONFIG");
+    if (configRow && configRow.data) {
+      try { return JSON.parse(configRow.data); } catch(e) {}
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+async function saveSessionConfig(config) {
+  const url = getApiUrl();
+  if (!url) return;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ id: "_SESSION_CONFIG", data: JSON.stringify(config), _action: "update", _sheet: "ClinicFeedback" }),
+    });
+  } catch (e) { console.error("Save session config error:", e); }
+}
+
+// QR Code
+const QRCode = ({ url }) => {
   const cells = [];
-  const size = 21;
+  const size = 25;
   const hash = url.split("").reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
-      // Position detection patterns (corners)
       const inTL = r < 7 && c < 7;
       const inTR = r < 7 && c >= size - 7;
       const inBL = r >= size - 7 && c < 7;
-      const isFinderOuter = (inTL || inTR || inBL) && (r === 0 || r === 6 || c === 0 || c === 6 || (r >= size-7 && r === size-1) || (r >= size-7 && r === size-7) || (c >= size-7 && c === size-1) || (c >= size-7 && c === size-7));
-      const isFinderInner = (inTL || inTR || inBL) && r >= 2 && r <= 4 && c >= 2 && c <= 4 && !(inTR && c < size-5) && !(inBL && r < size-5);
       const isFinder = (inTL || inTR || inBL) && (
         r === 0 || r === 6 || c === 0 || c === 6 ||
-        (inTR && (c === size-1 || c === size-7)) ||
-        (inBL && (r === size-1 || r === size-7)) ||
+        (inTR && (c === size - 1 || c === size - 7)) ||
+        (inBL && (r === size - 1 || r === size - 7)) ||
         (r >= 2 && r <= 4 && c >= 2 && c <= 4 && inTL) ||
-        (r >= 2 && r <= 4 && c >= size-5 && c <= size-3 && inTR) ||
-        (r >= size-5 && r <= size-3 && c >= 2 && c <= 4 && inBL)
+        (r >= 2 && r <= 4 && c >= size - 5 && c <= size - 3 && inTR) ||
+        (r >= size - 5 && r <= size - 3 && c >= 2 && c <= 4 && inBL)
       );
-
-      // Data area - pseudo-random based on hash
       const isData = !inTL && !inTR && !inBL && ((hash * (r * size + c + 1)) % 3 === 0);
-
       if (isFinder || isData) {
-        cells.push(
-          <rect key={`${r}-${c}`} x={c * 6} y={r * 6} width={6} height={6} fill="currentColor" />
-        );
+        cells.push(<rect key={`${r}-${c}`} x={c * 5} y={r * 5} width={5} height={5} fill="currentColor" />);
       }
     }
   }
-
   return (
-    <svg viewBox={`0 0 ${size * 6} ${size * 6}`} width="160" height="160" style={{ color: "#1a2332" }}>
-      <rect width={size * 6} height={size * 6} fill="#ffffff" rx="4" />
+    <svg viewBox={`0 0 ${size * 5} ${size * 5}`} width="180" height="180" style={{ color: "#1a2332" }}>
+      <rect width={size * 5} height={size * 5} fill="#ffffff" rx="4" />
       {cells}
     </svg>
   );
 };
 
 // ═══════════════════════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════════════════════
-
 export default function ClinicFeedback() {
-  const [mode, setMode] = useState("participant"); // participant | review | qr
-  const [responses, setResponses] = useState([]);
-
-  // Participant form state
+  const [mode, setMode] = useState("loading"); // loading | participant | thankyou | setup | qr
   const [scores, setScores] = useState({});
-  const [comment, setComment] = useState("");
+  const [comments, setComments] = useState({});
+  const [goalComment, setGoalComment] = useState("");
+  const [goalMet, setGoalMet] = useState(null);
+  const [generalComment, setGeneralComment] = useState("");
   const [participantName, setParticipantName] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // Clinic session metadata
-  const [clinicInfo, setClinicInfo] = useState({
+  const [session, setSession] = useState({
     date: new Date().toISOString().split("T")[0],
-    topic: "",
-    location: "",
-    audience: "",
+    topic: "", goal: "", location: "", trainerName: "Mark",
   });
+  const [sessionReady, setSessionReady] = useState(false);
 
-  // Assessor notes per response
-  const [assessorNotes, setAssessorNotes] = useState({});
-
-  // ── Derived ───────────────────────────────────────────
-  const aggregated = useMemo(() => {
-    if (responses.length === 0) return null;
-    const agg = {};
-    QUESTIONS.forEach(q => {
-      const vals = responses.map(r => r.scores[q.id]).filter(v => v > 0);
-      agg[q.id] = {
-        avg: vals.length > 0 ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : "—",
-        count: vals.length,
-        min: vals.length > 0 ? Math.min(...vals) : 0,
-        max: vals.length > 0 ? Math.max(...vals) : 0,
-        distribution: Array.from({ length: 10 }, (_, i) => vals.filter(v => v === i + 1).length),
-      };
+  // Load session config on mount
+  useEffect(() => {
+    loadSessionConfig().then(config => {
+      if (config && config.topic) {
+        setSession(config);
+        setSessionReady(true);
+        setMode("participant");
+      } else {
+        setMode("participant");
+      }
     });
-    return agg;
-  }, [responses]);
+  }, []);
 
-  // ── Submit feedback ───────────────────────────────────
-  const submitFeedback = () => {
-    const response = {
+  const submitFeedback = async () => {
+    const hasAnyScore = Object.values(scores).some(v => v > 0);
+    if (!hasAnyScore) return;
+    setSaving(true);
+    const row = {
       id: uid(),
       timestamp: new Date().toISOString(),
       name: participantName.trim() || "Anonymous",
-      scores: { ...scores },
-      comment: comment.trim(),
+      scores: JSON.stringify(scores),
+      comments: JSON.stringify(comments),
+      goalMet: goalMet || "",
+      goalComment: goalComment.trim(),
+      generalComment: generalComment.trim(),
+      sessionTopic: session.topic,
+      sessionGoal: session.goal,
+      sessionDate: session.date,
     };
-    setResponses(prev => [...prev, response]);
-    setScores({});
-    setComment("");
-    setParticipantName("");
-    setSubmitted(true);
+    await saveFeedback(row);
+    setSaving(false);
+    setMode("thankyou");
   };
 
   const resetForm = () => {
-    setSubmitted(false);
-    setScores({});
-    setComment("");
-    setParticipantName("");
+    setMode("participant");
+    setScores({}); setComments({}); setGeneralComment("");
+    setGoalComment(""); setGoalMet(null); setParticipantName("");
   };
 
-  // ── Slider component ──────────────────────────────────
-  const Slider = ({ questionId, value, onChange }) => {
-    const v = value || 0;
-    const pct = v > 0 ? ((v - 1) / 9) * 100 : 0;
+  const startSession = async () => {
+    if (!session.topic.trim()) return;
+    setSessionReady(true);
+    await saveSessionConfig(session);
+    setMode("qr");
+  };
+
+  const feedbackUrl = typeof window !== "undefined" ? window.location.href.split("?")[0] : "/feedback";
+
+  const Card = ({ children, style = {} }) => (
+    <div style={{
+      background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)",
+      borderRadius: 12, padding: "18px 16px", marginBottom: 12, ...style,
+    }}>{children}</div>
+  );
+
+  const inp = {
+    padding: "8px 12px", fontSize: 14, color: "#c0ccd8",
+    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+    borderRadius: 6, outline: "none", fontFamily: "inherit", boxSizing: "border-box", width: "100%",
+  };
+
+  if (mode === "loading") {
     return (
-      <div>
-        <div style={{ position: "relative", padding: "8px 0" }}>
-          <input
-            type="range"
-            min="1"
-            max="10"
-            value={v || 5}
-            onChange={e => onChange(Number(e.target.value))}
-            style={{
-              width: "100%",
-              height: 6,
-              appearance: "none",
-              WebkitAppearance: "none",
-              background: v > 0
-                ? `linear-gradient(to right, #3088cc ${pct}%, rgba(255,255,255,0.1) ${pct}%)`
-                : "rgba(255,255,255,0.08)",
-              borderRadius: 3,
-              outline: "none",
-              cursor: "pointer",
-            }}
-          />
-          {v > 0 && (
-            <div style={{
-              position: "absolute", top: -2, left: `calc(${pct}% - 14px)`,
-              width: 28, height: 28, borderRadius: "50%",
-              background: "linear-gradient(135deg, #3088cc, #2068a8)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 12, fontWeight: 800, color: "#fff",
-              boxShadow: "0 2px 8px rgba(48,136,204,0.3)",
-              pointerEvents: "none",
-            }}>
-              {v}
-            </div>
-          )}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
-          {Object.entries(SLIDER_LABELS).map(([k, label]) => (
-            <span key={k} style={{ fontSize: 9, color: "#4a6080" }}>{label}</span>
-          ))}
-        </div>
+      <div style={{ fontFamily: "'Outfit', system-ui, sans-serif", minHeight: "100vh",
+        background: "linear-gradient(178deg, #070c18 0%, #0d1828 35%, #101e34 100%)",
+        display: "flex", alignItems: "center", justifyContent: "center", color: "#7a9ab5" }}>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+        Loading...
       </div>
     );
-  };
-
-  // ── Score bar for review mode ─────────────────────────
-  const ScoreBar = ({ value, max = 10 }) => {
-    const pct = (value / max) * 100;
-    const color = value >= 8 ? "#28a858" : value >= 5 ? "#e8a050" : "#cc4040";
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={{ flex: 1, height: 6, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
-          <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 3, transition: "width 0.3s ease" }} />
-        </div>
-        <span style={{ fontSize: 13, fontWeight: 800, color, minWidth: 28, textAlign: "right" }}>{value}</span>
-      </div>
-    );
-  };
-
-  // ═══════════════════════════════════════════════════════════════════
-  // RENDER
-  // ═══════════════════════════════════════════════════════════════════
+  }
 
   return (
     <div style={{
-      fontFamily: "'Outfit', system-ui, sans-serif",
-      minHeight: "100vh",
-      background: mode === "participant" || mode === "qr"
-        ? "linear-gradient(178deg, #0a1220 0%, #0e1a2c 40%, #122240 100%)"
-        : "linear-gradient(178deg, #070c18 0%, #0d1828 35%, #101e34 100%)",
+      fontFamily: "'Outfit', system-ui, sans-serif", minHeight: "100vh",
+      background: "linear-gradient(178deg, #070c18 0%, #0d1828 35%, #101e34 100%)",
       color: "#e0e8f0",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "20px 16px 60px" }}>
 
-      {/* ── HEADER ──────────────────────────────── */}
-      <div style={{
-        borderBottom: "1px solid rgba(255,255,255,0.04)",
-        padding: "16px 16px 12px",
-        background: "rgba(255,255,255,0.01)",
-      }}>
-        <div style={{ maxWidth: 600, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.03em" }}>
-                {mode === "participant" ? "Clinic Feedback" : mode === "qr" ? "Share Feedback Form" : "Feedback Review"}
-              </div>
-              <div style={{ fontSize: 10, color: "#3d5470", marginTop: 2 }}>
-                {mode === "participant" ? "Help your trainer improve — takes 30 seconds" : mode === "qr" ? "Scan or share this link with participants" : `Mark · AT Candidate · ${responses.length} responses`}
-              </div>
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#e8a050", letterSpacing: "-0.03em" }}>⛷ Clinic Feedback</div>
+          {sessionReady && (
+            <div style={{ fontSize: 13, color: "#7a9ab5", marginTop: 4 }}>
+              {session.trainerName} · {session.date}{session.location ? ` · ${session.location}` : ""}
             </div>
-            <div style={{ display: "flex", gap: 4 }}>
-              {["participant", "review", "qr"].map(m => {
-                const labels = { participant: "Form", review: "Review", qr: "QR" };
-                const icons = { participant: "📝", review: "📊", qr: "📱" };
-                return (
-                  <button
-                    key={m}
-                    onClick={() => setMode(m)}
-                    style={{
-                      padding: "5px 10px", borderRadius: 5, fontSize: 10, fontWeight: 600,
-                      border: mode === m ? "1.5px solid rgba(48,136,204,0.4)" : "1.5px solid rgba(255,255,255,0.06)",
-                      background: mode === m ? "rgba(48,136,204,0.1)" : "rgba(255,255,255,0.015)",
-                      color: mode === m ? "#5ab0e0" : "#3d5470",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {icons[m]} {labels[m]}
-                  </button>
-                );
-              })}
+          )}
+          {(mode === "setup" || mode === "qr") && (
+            <div style={{ display: "flex", justifyContent: "center", gap: 5, marginTop: 12 }}>
+              {[{ id: "setup", label: "Setup" }, { id: "qr", label: "QR Code" }].map(t => (
+                <button key={t.id} onClick={() => setMode(t.id)} style={{
+                  padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  border: mode === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)",
+                  background: mode === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)",
+                  color: mode === t.id ? "#e8a050" : "#7a9ab5",
+                }}>{t.label}</button>
+              ))}
+              <button onClick={() => setMode("participant")} style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                border: "1.5px solid rgba(255,255,255,0.07)",
+                background: "rgba(255,255,255,0.015)", color: "#7a9ab5",
+              }}>Preview Form</button>
             </div>
-          </div>
+          )}
         </div>
-      </div>
 
-      {/* ── CONTENT ─────────────────────────────── */}
-      <div style={{ maxWidth: 600, margin: "0 auto", padding: "16px 16px 60px" }}>
-
-        {/* ═══ QR CODE MODE ═══ */}
-        {mode === "qr" && (
-          <div style={{ textAlign: "center", padding: "20px 0" }}>
-            <div style={{
-              display: "inline-block", padding: 16, background: "#fff", borderRadius: 12,
-              marginBottom: 16, boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-            }}>
-              <QRPlaceholder url={typeof window !== "undefined" ? window.location.href : "https://your-app-url.vercel.app"} />
+        {/* ═══ SETUP ═══ */}
+        {mode === "setup" && (
+          <Card style={{ borderLeft: "3px solid #e07830" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#e8a050", marginBottom: 4 }}>Set Up Your Clinic</div>
+            <div style={{ fontSize: 13, color: "#7a9ab5", marginBottom: 16, lineHeight: 1.5 }}>
+              Fill this out before sharing the QR code. Participants will see the topic and goal.
             </div>
-            <div style={{ fontSize: 12, color: "#6a8098", marginBottom: 16, lineHeight: 1.5 }}>
-              In production, this QR code will link directly to the feedback form.
-              <br />Share this URL with your clinic participants:
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>Your Name</label>
+              <input value={session.trainerName} onChange={e => setSession(p => ({ ...p, trainerName: e.target.value }))} style={inp} />
             </div>
-            <div style={{
-              padding: "12px 16px", background: "rgba(48,136,204,0.08)",
-              border: "1px solid rgba(48,136,204,0.2)", borderRadius: 8,
-              fontSize: 13, color: "#5ab0e0", fontWeight: 600, wordBreak: "break-all",
-              marginBottom: 20,
-            }}>
-              {typeof window !== "undefined" ? window.location.href : "https://your-app-url.vercel.app"}
-            </div>
-
-            <div style={{ textAlign: "left" }}>
-              <div style={{ fontSize: 11, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
-                Clinic Session Info
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>Date</label>
+                <input type="date" value={session.date} onChange={e => setSession(p => ({ ...p, date: e.target.value }))} style={inp} />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-                <div>
-                  <label style={{ fontSize: 10, color: "#4a6080", fontWeight: 600, display: "block", marginBottom: 3 }}>Date</label>
-                  <input type="date" value={clinicInfo.date} onChange={e => setClinicInfo(p => ({ ...p, date: e.target.value }))}
-                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, color: "#e0e8f0", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 10, color: "#4a6080", fontWeight: 600, display: "block", marginBottom: 3 }}>Location</label>
-                  <input value={clinicInfo.location} onChange={e => setClinicInfo(p => ({ ...p, location: e.target.value }))} placeholder="e.g. Keystone — Top of 6"
-                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, color: "#e0e8f0", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 10, color: "#4a6080", fontWeight: 600, display: "block", marginBottom: 3 }}>Clinic Topic</label>
-                  <input value={clinicInfo.topic} onChange={e => setClinicInfo(p => ({ ...p, topic: e.target.value }))} placeholder="e.g. Dynamic Short Turns"
-                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, color: "#e0e8f0", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 10, color: "#4a6080", fontWeight: 600, display: "block", marginBottom: 3 }}>Audience</label>
-                  <input value={clinicInfo.audience} onChange={e => setClinicInfo(p => ({ ...p, audience: e.target.value }))} placeholder="e.g. L2 Candidates"
-                    style={{ width: "100%", padding: "7px 10px", fontSize: 12, color: "#e0e8f0", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
-                </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>Location</label>
+                <input value={session.location} onChange={e => setSession(p => ({ ...p, location: e.target.value }))} placeholder="e.g., Keystone" style={inp} />
               </div>
             </div>
-          </div>
-        )}
-
-        {/* ═══ PARTICIPANT MODE ═══ */}
-        {mode === "participant" && !submitted && (
-          <div>
-            {/* Clinic context banner */}
-            {(clinicInfo.topic || clinicInfo.location) && (
-              <div style={{
-                padding: "10px 14px", marginBottom: 16, borderRadius: 8,
-                background: "rgba(48,136,204,0.06)", border: "1px solid rgba(48,136,204,0.12)",
-                fontSize: 12, color: "#5ab0e0",
-              }}>
-                {clinicInfo.topic && <span style={{ fontWeight: 700 }}>{clinicInfo.topic}</span>}
-                {clinicInfo.topic && clinicInfo.location && " · "}
-                {clinicInfo.location && <span>{clinicInfo.location}</span>}
-                {clinicInfo.audience && <span style={{ color: "#4a6080" }}> · {clinicInfo.audience}</span>}
-              </div>
-            )}
-
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>What was today's session about?</label>
+              <input value={session.topic} onChange={e => setSession(p => ({ ...p, topic: e.target.value }))} placeholder="e.g., Improving your short turns in bumps" style={{ ...inp, fontSize: 15 }} />
+            </div>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 10, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>
-                Your Name (optional)
-              </label>
-              <input
-                value={participantName}
-                onChange={e => setParticipantName(e.target.value)}
-                placeholder="Anonymous is fine"
-                style={{
-                  width: "100%", padding: "10px 12px", fontSize: 14, color: "#e0e8f0",
-                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 8, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
-                }}
-              />
+              <label style={{ fontSize: 11, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>What should participants have learned?</label>
+              <textarea value={session.goal} onChange={e => setSession(p => ({ ...p, goal: e.target.value }))}
+                placeholder="e.g., By the end you should feel more confident linking short turns through moguls..."
+                style={{ ...inp, minHeight: 70, resize: "vertical", lineHeight: 1.5 }} />
+              <div style={{ fontSize: 11, color: "#4d6888", marginTop: 3 }}>Plain language — no jargon.</div>
             </div>
-
-            {QUESTIONS.map((q, qi) => (
-              <div key={q.id} style={{
-                marginBottom: 20, padding: "16px",
-                background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
-                borderRadius: 10,
-              }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#d0d8e0", marginBottom: 12, lineHeight: 1.45 }}>
-                  {q.text}
-                </div>
-                <Slider
-                  questionId={q.id}
-                  value={scores[q.id]}
-                  onChange={v => setScores(prev => ({ ...prev, [q.id]: v }))}
-                />
-              </div>
-            ))}
-
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 10, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>
-                Anything else you'd like to share?
-              </label>
-              <textarea
-                value={comment}
-                onChange={e => setComment(e.target.value)}
-                placeholder="What worked well? What could be better? Any specific moments that stood out?"
-                style={{
-                  width: "100%", minHeight: 80, padding: "12px", fontSize: 13, color: "#e0e8f0",
-                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-                  borderRadius: 8, outline: "none", fontFamily: "inherit", resize: "vertical",
-                  lineHeight: 1.55, boxSizing: "border-box",
-                }}
-              />
-            </div>
-
-            <button
-              onClick={submitFeedback}
-              disabled={Object.keys(scores).length === 0}
-              style={{
-                width: "100%", padding: "14px", borderRadius: 8, border: "none",
-                background: Object.keys(scores).length > 0
-                  ? "linear-gradient(135deg, #3088cc, #2068a8)"
-                  : "rgba(255,255,255,0.05)",
-                color: Object.keys(scores).length > 0 ? "#fff" : "#3d5470",
-                fontSize: 15, fontWeight: 700, cursor: Object.keys(scores).length > 0 ? "pointer" : "default",
-                letterSpacing: "0.01em",
-              }}
-            >
-              Submit Feedback
-            </button>
-          </div>
+            <button onClick={startSession} disabled={!session.topic.trim()} style={{
+              width: "100%", padding: "12px", borderRadius: 8, border: "none",
+              background: session.topic.trim() ? "linear-gradient(135deg, #e07830, #c06020)" : "rgba(255,255,255,0.05)",
+              color: session.topic.trim() ? "#fff" : "#4d6888",
+              fontSize: 15, fontWeight: 700, cursor: session.topic.trim() ? "pointer" : "default",
+            }}>{sessionReady ? "Update & Show QR" : "Save & Show QR Code"}</button>
+          </Card>
         )}
 
-        {/* ═══ SUBMITTED CONFIRMATION ═══ */}
-        {mode === "participant" && submitted && (
-          <div style={{ textAlign: "center", padding: "60px 20px" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>⛷</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#d0d8e0", marginBottom: 6 }}>Thank you!</div>
-            <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.5, marginBottom: 24 }}>
-              Your feedback helps your trainer develop and improve.
-              <br />Have a great day on the mountain.
-            </div>
-            <button
-              onClick={resetForm}
-              style={{
-                padding: "10px 24px", borderRadius: 7, border: "1px solid rgba(48,136,204,0.3)",
-                background: "rgba(48,136,204,0.1)", color: "#5ab0e0",
-                fontSize: 13, fontWeight: 600, cursor: "pointer",
-              }}
-            >
-              Submit Another Response
-            </button>
-          </div>
-        )}
+        {/* ═══ PARTICIPANT FORM ═══ */}
+        {mode === "participant" && (<>
+          {sessionReady && session.topic && (
+            <Card style={{ borderLeft: "3px solid #28a858", background: "rgba(40,168,88,0.03)" }}>
+              <div style={{ fontSize: 11, color: "#28a858", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Today's Session</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#d0d8e0", marginBottom: 4 }}>{session.topic}</div>
+              {session.goal && <div style={{ fontSize: 14, color: "#7a9ab5", lineHeight: 1.5 }}><strong style={{ color: "#d0d8e0" }}>Goal: </strong>{session.goal}</div>}
+            </Card>
+          )}
 
-        {/* ═══ REVIEW MODE ═══ */}
-        {mode === "review" && (
-          <div>
-            {/* Clinic info summary */}
-            {(clinicInfo.topic || clinicInfo.date) && (
-              <div style={{
-                padding: "10px 14px", marginBottom: 16, borderRadius: 8,
-                background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
-                display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12,
-              }}>
-                {clinicInfo.date && <div><span style={{ color: "#4a6080" }}>Date:</span> <span style={{ color: "#a0b0c0" }}>{clinicInfo.date}</span></div>}
-                {clinicInfo.topic && <div><span style={{ color: "#4a6080" }}>Topic:</span> <span style={{ color: "#a0b0c0" }}>{clinicInfo.topic}</span></div>}
-                {clinicInfo.location && <div><span style={{ color: "#4a6080" }}>Location:</span> <span style={{ color: "#a0b0c0" }}>{clinicInfo.location}</span></div>}
-                {clinicInfo.audience && <div><span style={{ color: "#4a6080" }}>Audience:</span> <span style={{ color: "#a0b0c0" }}>{clinicInfo.audience}</span></div>}
+          <Card>
+            <input value={participantName} onChange={e => setParticipantName(e.target.value)}
+              placeholder="Your name (optional — feedback is anonymous)"
+              style={{ ...inp, background: "transparent", border: "none", padding: "0", fontSize: 14 }} />
+          </Card>
+
+          {QUESTIONS.map((q, qi) => (
+            <Card key={q.id}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#d0d8e0", lineHeight: 1.5, marginBottom: 14 }}>
+                <span style={{ color: "#e8a050", fontWeight: 700 }}>{qi + 1}. </span>{q.text}
               </div>
-            )}
-
-            {responses.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "50px 20px", color: "#2a3c50" }}>
-                <div style={{ fontSize: 32, marginBottom: 8, opacity: 0.4 }}>📊</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#4a6080" }}>No responses yet</div>
-                <div style={{ fontSize: 12, color: "#2a3c50", marginTop: 4 }}>Share the QR code with clinic participants to start collecting feedback.</div>
+              <div style={{ padding: "0 4px", marginBottom: 8 }}>
+                <input type="range" min="1" max="10" value={scores[q.id] || 5}
+                  onChange={e => setScores(p => ({ ...p, [q.id]: Number(e.target.value) }))}
+                  style={{ width: "100%", accentColor: "#e07830" }} />
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  {Object.entries(SLIDER_LABELS).map(([val, label]) => (
+                    <span key={val} style={{ fontSize: 10, color: "#4d6888", fontWeight: 600,
+                      opacity: Math.abs((scores[q.id] || 5) - Number(val)) < 2 ? 1 : 0.4 }}>{label}</span>
+                  ))}
+                </div>
               </div>
-            ) : (
-              <>
-                {/* ── Aggregated Scores ────────────────── */}
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{
-                    fontSize: 11, color: "#4a6080", fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.07em", marginBottom: 10,
-                  }}>
-                    Aggregated Scores — {responses.length} response{responses.length !== 1 ? "s" : ""}
-                  </div>
+              <div style={{ textAlign: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 30, fontWeight: 800,
+                  color: (scores[q.id] || 5) >= 7 ? "#28a858" : (scores[q.id] || 5) >= 4 ? "#e07830" : "#e05028",
+                }}>{scores[q.id] || 5}</span>
+                <span style={{ fontSize: 14, color: "#7a9ab5" }}>/10</span>
+              </div>
+              <input value={comments[q.id] || ""} onChange={e => setComments(p => ({ ...p, [q.id]: e.target.value }))}
+                placeholder="Want to add more detail? (optional)"
+                style={{ ...inp, fontSize: 13, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }} />
+            </Card>
+          ))}
 
-                  {QUESTIONS.map(q => {
-                    const a = aggregated[q.id];
-                    return (
-                      <div key={q.id} style={{
-                        padding: "14px 16px", marginBottom: 8, borderRadius: 8,
-                        background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: "#c0ccd8" }}>{q.shortLabel}</span>
-                          <span style={{ fontSize: 9, color: "#3d5470" }}>{q.gateRef}</span>
-                        </div>
-                        <ScoreBar value={Number(a.avg) || 0} />
-                        <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 10, color: "#506880" }}>
-                          <span>Avg: <strong style={{ color: "#a0b0c0" }}>{a.avg}</strong></span>
-                          <span>Min: <strong style={{ color: "#a0b0c0" }}>{a.min || "—"}</strong></span>
-                          <span>Max: <strong style={{ color: "#a0b0c0" }}>{a.max || "—"}</strong></span>
-                          <span>n={a.count}</span>
-                        </div>
-                        {/* Mini distribution */}
-                        <div style={{ display: "flex", gap: 2, marginTop: 6, height: 20, alignItems: "flex-end" }}>
-                          {a.distribution.map((count, i) => (
-                            <div key={i} style={{
-                              flex: 1, minHeight: 2, borderRadius: 1,
-                              height: count > 0 ? `${Math.max(20, (count / Math.max(...a.distribution)) * 100)}%` : 2,
-                              background: count > 0
-                                ? i >= 7 ? "rgba(40,168,88,0.4)" : i >= 4 ? "rgba(232,160,80,0.3)" : "rgba(200,60,60,0.3)"
-                                : "rgba(255,255,255,0.03)",
-                              transition: "height 0.3s ease",
-                            }} title={`${i+1}: ${count} responses`} />
-                          ))}
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, color: "#3d5470", marginTop: 2 }}>
-                          <span>1</span><span>5</span><span>10</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* ── Individual Responses ──────────────── */}
-                <div style={{
-                  fontSize: 11, color: "#4a6080", fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.07em", marginBottom: 10,
-                }}>
-                  Individual Responses
-                </div>
-
-                {responses.map((r, ri) => (
-                  <div key={r.id} style={{
-                    padding: "14px 16px", marginBottom: 8, borderRadius: 8,
-                    background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                      <div>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: "#a0b0c0" }}>{r.name}</span>
-                        <span style={{ fontSize: 10, color: "#3d5470", marginLeft: 8 }}>
-                          {new Date(r.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      </div>
-                      <div style={{ display: "flex", gap: 3 }}>
-                        {QUESTIONS.map(q => {
-                          const v = r.scores[q.id];
-                          const color = v >= 8 ? "#28a858" : v >= 5 ? "#e8a050" : v > 0 ? "#cc4040" : "#2a3c50";
-                          return (
-                            <div key={q.id} title={q.shortLabel} style={{
-                              width: 22, height: 18, borderRadius: 3,
-                              background: v > 0 ? `${color}18` : "rgba(255,255,255,0.02)",
-                              border: `1px solid ${v > 0 ? `${color}35` : "rgba(255,255,255,0.04)"}`,
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                              fontSize: 10, fontWeight: 800, color,
-                            }}>
-                              {v || "—"}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {r.comment && (
-                      <div style={{
-                        fontSize: 12, color: "#8898a8", lineHeight: 1.5,
-                        padding: "8px 10px", background: "rgba(255,255,255,0.015)",
-                        borderRadius: 6, marginBottom: 10, fontStyle: "italic",
-                      }}>
-                        "{r.comment}"
-                      </div>
-                    )}
-
-                    {/* Assessor notes */}
-                    <div>
-                      <label style={{ fontSize: 9, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 3 }}>
-                        Assessor / Candidate Notes
-                      </label>
-                      <textarea
-                        value={assessorNotes[r.id] || ""}
-                        onChange={ev => setAssessorNotes(prev => ({ ...prev, [r.id]: ev.target.value }))}
-                        placeholder="How does this feedback inform your CL development? What does it tell you about your clinic leading?"
-                        style={{
-                          width: "100%", minHeight: 40, padding: "7px 10px", fontSize: 11, color: "#c0ccd8",
-                          background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
-                          borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
-                          lineHeight: 1.5, boxSizing: "border-box",
-                        }}
-                      />
-                    </div>
-                  </div>
+          {session.goal && (
+            <Card style={{ borderLeft: "3px solid #3088cc" }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#d0d8e0", lineHeight: 1.5, marginBottom: 12 }}>
+                Thinking about the goal — <em style={{ color: "#7a9ab5" }}>"{session.goal}"</em> — how well was it achieved?
+              </div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                {[
+                  { id: "yes", label: "Yes — I got it", color: "#28a858" },
+                  { id: "partially", label: "Partially", color: "#e07830" },
+                  { id: "no", label: "Not really", color: "#e05028" },
+                ].map(opt => (
+                  <button key={opt.id} onClick={() => setGoalMet(opt.id)} style={{
+                    flex: 1, minWidth: 90, padding: "10px 12px", borderRadius: 7, fontSize: 14, fontWeight: 600, cursor: "pointer",
+                    background: goalMet === opt.id ? `${opt.color}18` : "rgba(255,255,255,0.02)",
+                    border: `2px solid ${goalMet === opt.id ? opt.color : "rgba(255,255,255,0.06)"}`,
+                    color: goalMet === opt.id ? opt.color : "#7a9ab5",
+                  }}>{opt.label}</button>
                 ))}
+              </div>
+              <input value={goalComment} onChange={e => setGoalComment(e.target.value)}
+                placeholder="What helped? What would have helped more?"
+                style={{ ...inp, fontSize: 13, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }} />
+            </Card>
+          )}
 
-                {/* ── Overall Assessor Evaluation ──────── */}
-                <div style={{
-                  marginTop: 16, padding: "16px",
-                  background: "rgba(40,168,88,0.03)", border: "1px solid rgba(40,168,88,0.1)",
-                  borderRadius: 10,
-                }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#28a858", marginBottom: 10 }}>
-                    Overall Clinic Evaluation — Assessor / Candidate
-                  </div>
-                  <textarea
-                    value={assessorNotes._overall || ""}
-                    onChange={ev => setAssessorNotes(prev => ({ ...prev, _overall: ev.target.value }))}
-                    placeholder="Summarize what the participant feedback reveals about clinic leading performance. Which CL gates does this evidence support? What should change for the next clinic?"
-                    style={{
-                      width: "100%", minHeight: 70, padding: "10px 12px", fontSize: 12, color: "#c0ccd8",
-                      background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
-                      borderRadius: 8, outline: "none", fontFamily: "inherit", resize: "vertical",
-                      lineHeight: 1.55, boxSizing: "border-box",
-                    }}
-                  />
-                </div>
-              </>
-            )}
+          <Card>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#d0d8e0", marginBottom: 8 }}>Anything else?</div>
+            <textarea value={generalComment} onChange={e => setGeneralComment(e.target.value)}
+              placeholder="What stood out? What could be improved?"
+              style={{ ...inp, minHeight: 60, resize: "vertical", lineHeight: 1.5 }} />
+          </Card>
+
+          <button onClick={submitFeedback} disabled={saving} style={{
+            width: "100%", padding: "14px", borderRadius: 8, border: "none",
+            background: saving ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg, #e07830, #c06020)",
+            color: saving ? "#7a9ab5" : "#fff",
+            fontSize: 16, fontWeight: 700, cursor: saving ? "default" : "pointer",
+          }}>{saving ? "Saving..." : "Submit Feedback"}</button>
+
+          {/* Trainer access — subtle link at bottom */}
+          <div style={{ textAlign: "center", marginTop: 20 }}>
+            <button onClick={() => setMode("setup")} style={{
+              background: "none", border: "none", color: "#3a5068", fontSize: 11, cursor: "pointer",
+            }}>I'm the trainer →</button>
           </div>
+        </>)}
+
+        {/* ═══ THANK YOU ═══ */}
+        {mode === "thankyou" && (
+          <Card style={{ textAlign: "center", padding: "40px 20px" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🎿</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#28a858", marginBottom: 8 }}>Thank you!</div>
+            <div style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.5, marginBottom: 20 }}>
+              Your feedback is really appreciated and helps your trainer improve.
+            </div>
+            <button onClick={resetForm} style={{
+              padding: "10px 24px", borderRadius: 7, border: "1px solid rgba(224,120,48,0.3)",
+              background: "rgba(224,120,48,0.08)", color: "#e8a050", fontSize: 14, fontWeight: 600, cursor: "pointer",
+            }}>Submit Another Response</button>
+          </Card>
+        )}
+
+        {/* ═══ QR CODE ═══ */}
+        {mode === "qr" && (
+          <Card style={{ textAlign: "center", padding: "30px 20px" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#e8a050", marginBottom: 6 }}>Share with Your Group</div>
+            <div style={{ fontSize: 14, color: "#7a9ab5", marginBottom: 6, lineHeight: 1.5 }}>
+              Have participants scan this at the end of the session. Takes about 2 minutes.
+            </div>
+            {session.topic && (
+              <div style={{ fontSize: 13, color: "#d0d8e0", marginBottom: 16, padding: "8px 12px", borderRadius: 6, background: "rgba(40,168,88,0.04)", border: "1px solid rgba(40,168,88,0.1)", display: "inline-block" }}>
+                <strong>{session.topic}</strong>
+              </div>
+            )}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "inline-block", padding: 16, background: "#ffffff", borderRadius: 12 }}>
+                <QRCode url={feedbackUrl} />
+              </div>
+            </div>
+            <div style={{
+              padding: "10px 14px", borderRadius: 8, fontSize: 13, color: "#e8a050",
+              background: "rgba(224,120,48,0.06)", border: "1px solid rgba(224,120,48,0.15)",
+              wordBreak: "break-all", marginBottom: 12,
+            }}>{feedbackUrl}</div>
+            <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(feedbackUrl); }}
+              style={{ padding: "8px 20px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.3)",
+                background: "rgba(224,120,48,0.08)", color: "#e8a050", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+              Copy Link
+            </button>
+          </Card>
         )}
       </div>
 
       <style>{`
-        input[type="range"]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          width: 24px; height: 24px; border-radius: 50%;
-          background: linear-gradient(135deg, #3088cc, #2068a8);
-          border: 2px solid rgba(255,255,255,0.2);
-          cursor: pointer; box-shadow: 0 2px 8px rgba(48,136,204,0.3);
-          margin-top: -9px;
+        input:focus, textarea:focus, select:focus {
+          border-color: rgba(224,120,48,0.35) !important;
+          box-shadow: 0 0 0 2px rgba(224,120,48,0.06);
         }
-        input[type="range"]::-moz-range-thumb {
-          width: 24px; height: 24px; border-radius: 50%;
-          background: linear-gradient(135deg, #3088cc, #2068a8);
-          border: 2px solid rgba(255,255,255,0.2);
-          cursor: pointer; box-shadow: 0 2px 8px rgba(48,136,204,0.3);
-        }
-        input:focus, textarea:focus {
-          border-color: rgba(48,136,204,0.35) !important;
-          box-shadow: 0 0 0 2px rgba(48,136,204,0.06);
-        }
-        select { appearance: auto; }
+        input[type="range"] { height: 6px; }
+        input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; }
       `}</style>
     </div>
   );

@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { SHEETS_API_URL as _configUrl } from "./config";
 
 // ═══════════════════════════════════════════════════════════════════════
 // DATA — Pre-loaded from AT Dev Plan v5
@@ -81,7 +80,7 @@ Object.values(GATES).forEach(mod => {
 const MENTORS = ["Chris", "Gates", "Mike"];
 const LO_STATUSES = ["Not Started", "In Progress", "Ready for Review", "Verified"];
 const LO_STATUS_COLORS = {
-  "Not Started": { bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", text: "#5a7898" },
+  "Not Started": { bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)", text: "#7a9ab5" },
   "In Progress": { bg: "rgba(230,120,48,0.1)", border: "rgba(230,120,48,0.3)", text: "#e07830" },
   "Ready for Review": { bg: "rgba(200,170,50,0.1)", border: "rgba(200,170,50,0.3)", text: "#c8aa32" },
   "Verified": { bg: "rgba(40,168,88,0.12)", border: "rgba(40,168,88,0.35)", text: "#28a858" },
@@ -202,7 +201,7 @@ const StatusBadge = ({ status }) => {
   const c = LO_STATUS_COLORS[status] || LO_STATUS_COLORS["Not Started"];
   return (
     <span style={{
-      padding: "3px 8px", borderRadius: 5, fontSize: 14, fontWeight: 700,
+      padding: "3px 8px", borderRadius: 5, fontSize: 13, fontWeight: 700,
       background: c.bg, border: `1px solid ${c.border}`, color: c.text,
     }}>
       {status}
@@ -212,7 +211,7 @@ const StatusBadge = ({ status }) => {
 
 const SectionLabel = ({ children }) => (
   <div style={{
-    fontSize: 14, color: "#607898", fontWeight: 700,
+    fontSize: 13, color: "#607898", fontWeight: 700,
     textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 5,
   }}>
     {children}
@@ -242,22 +241,19 @@ const USERS = {
 // ═══════════════════════════════════════════════════════════════════════
 // API CONFIG
 // ═══════════════════════════════════════════════════════════════════════
-const API_URL = _configUrl || "";
-
-const API_ENABLED = !!API_URL;
-
-if (API_ENABLED) { console.log("AT Tracker API connected"); }
-else { console.log("AT Tracker API: NOT CONFIGURED — set VITE_SHEETS_API_URL in .env.local or Vercel"); }
+// In Vite: main.jsx sets window.__AT_API_URL__ from config.js
+// In preview: runs without API (data in memory only)
+function getApiUrl() {
+  return (typeof window !== "undefined" && window.__AT_API_URL__) || "";
+}
 
 // Google Apps Script API helpers
-// GAS redirects GET requests (302) which causes CORS issues
-// Solution: use POST for everything — GAS handles POST without redirect issues via doPost
 
 async function apiGet(sheetName) {
-  if (!API_ENABLED) return [];
+  const url = getApiUrl();
+  if (!url) return [];
   try {
-    // Send as POST with action in the body to avoid GET redirect
-    const res = await fetch(API_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({ _action: "getAll", _sheet: sheetName }),
@@ -272,11 +268,12 @@ async function apiGet(sheetName) {
 }
 
 async function apiPost(action, sheetName, rowData, id) {
-  if (!API_ENABLED) return;
+  const url = getApiUrl();
+  if (!url) return;
   try {
     const payload = { ...rowData, _action: action, _sheet: sheetName };
     if (id) payload._id = id;
-    await fetch(API_URL, {
+    await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload),
@@ -345,11 +342,15 @@ export default function ATDevelopmentTracker() {
   const [compareB, setCompareB] = useState(null);
   const [selectedSeason, setSelectedSeason] = useState(DEFAULT_SEASON);
   const [showAllSeasons, setShowAllSeasons] = useState(false);
+  const [scoreHistory, setScoreHistory] = useState([]); // [{ gateId, who, score, timestamp }]
+  const [blindMode, setBlindMode] = useState(true);
+  const [revealedGates, setRevealedGates] = useState({}); // { gateId: true } — overrides blind mode per gate
+  const [clinicFeedback, setClinicFeedback] = useState([]);
   const saveTimerRef = useRef({});
 
   // ── Load data from Google Sheets on mount ─────────────
   useEffect(() => {
-    if (!API_ENABLED) {
+    if (!getApiUrl()) {
       setDataLoaded(true);
       return;
     }
@@ -358,12 +359,17 @@ export default function ATDevelopmentTracker() {
       try {
         // Load LOs
         const loRows = await apiGet("LearningObjectives");
-        const parsedLOs = loRows.filter(r => r.id).map(r => ({
-          ...r,
-          gates: r.gates ? r.gates.split(",").map(g => g.trim()).filter(Boolean) : [],
-          score: r.score ? Number(r.score) : null,
-          activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
-        }));
+        const parsedLOs = loRows.filter(r => r.id).map(r => {
+          let loComments = [];
+          try { loComments = r.loComments ? JSON.parse(r.loComments) : []; } catch(e) {}
+          return {
+            ...r,
+            gates: r.gates ? r.gates.split(",").map(g => g.trim()).filter(Boolean) : [],
+            score: r.score ? Number(r.score) : null,
+            activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
+            loComments,
+          };
+        });
         setLos(parsedLOs);
 
         // Load Diary Entries
@@ -378,6 +384,7 @@ export default function ATDevelopmentTracker() {
           return {
             ...r,
             activeLOIds: r.activeLOIds ? r.activeLOIds.split(",").map(s => s.trim()).filter(Boolean) : [],
+            activeLEIds: r.activeLEIds ? r.activeLEIds.split(",").map(s => s.trim()).filter(Boolean) : [],
             attachments,
             comments,
             readBy,
@@ -434,6 +441,23 @@ export default function ATDevelopmentTracker() {
         if (blcRow && blcRow.leData) {
           try { setBaselineComments(JSON.parse(blcRow.leData)); } catch(e) {}
         }
+
+        // Load score history
+        const shRow = gateRows.find(r => r.gateId === "_SCORE_HISTORY");
+        if (shRow && shRow.leData) {
+          try { setScoreHistory(JSON.parse(shRow.leData)); } catch(e) {}
+        }
+
+        // Load clinic feedback
+        try {
+          const fbRows = await apiGet("ClinicFeedback");
+          const parsed = fbRows.filter(r => r.id && r.id !== "_SESSION_CONFIG").map(r => ({
+            ...r,
+            scores: r.scores ? JSON.parse(r.scores) : {},
+            comments: r.comments ? JSON.parse(r.comments) : {},
+          }));
+          setClinicFeedback(parsed);
+        } catch(e) { console.log("No clinic feedback yet"); }
       } catch (e) {
         console.error("Failed to load data:", e);
       }
@@ -488,11 +512,11 @@ export default function ATDevelopmentTracker() {
         <div style={{ width: "100%", maxWidth: 340, padding: "0 20px" }}>
           {/* Logo / Title */}
           <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>⛷</div>
-            <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f4f8" }}>
+            <div style={{ fontSize: 39, marginBottom: 8 }}>⛷</div>
+            <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f4f8" }}>
               AT Development Tracker
             </div>
-            <div style={{ fontSize: 16, color: "#4d6888", marginTop: 4 }}>
+            <div style={{ fontSize: 15, color: "#4d6888", marginTop: 4 }}>
               Mark · PSIA-RM · Keystone
             </div>
           </div>
@@ -504,13 +528,13 @@ export default function ATDevelopmentTracker() {
             border: "1px solid rgba(255,255,255,0.06)",
             borderRadius: 12,
           }}>
-            <div style={{ fontSize: 18, fontWeight: 600, color: "#c0ccd8", marginBottom: 16 }}>
+            <div style={{ fontSize: 17, fontWeight: 600, color: "#c0ccd8", marginBottom: 16 }}>
               Sign In
             </div>
 
             {/* User Select */}
             <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 14, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>
+              <label style={{ fontSize: 13, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>
                 Who are you?
               </label>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -530,15 +554,15 @@ export default function ATDevelopmentTracker() {
                       width: 28, height: 28, borderRadius: "50%",
                       background: `${user.color}20`, border: `1.5px solid ${user.color}40`,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 15, fontWeight: 800, color: user.color,
+                      fontSize: 14, fontWeight: 800, color: user.color,
                     }}>
                       {user.name[0]}
                     </div>
                     <div style={{ textAlign: "left" }}>
-                      <div style={{ fontSize: 17, fontWeight: 700, color: loginId === key ? "#e0e8f0" : "#6a8098" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: loginId === key ? "#e0e8f0" : "#6a8098" }}>
                         {user.name}
                       </div>
-                      <div style={{ fontSize: 13, color: "#4d6888", textTransform: "capitalize" }}>
+                      <div style={{ fontSize: 12, color: "#4d6888", textTransform: "capitalize" }}>
                         {user.role === "candidate" ? "Candidate" : "Mentor / Assessor"}
                       </div>
                     </div>
@@ -550,7 +574,7 @@ export default function ATDevelopmentTracker() {
             {/* PIN */}
             {loginId && (
               <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 14, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>
+                <label style={{ fontSize: 13, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 4 }}>
                   PIN
                 </label>
                 <input
@@ -563,7 +587,7 @@ export default function ATDevelopmentTracker() {
                   placeholder="4-digit PIN"
                   autoFocus
                   style={{
-                    width: "100%", padding: "12px 14px", fontSize: 22, fontWeight: 700,
+                    width: "100%", padding: "12px 14px", fontSize: 21, fontWeight: 700,
                     textAlign: "center", letterSpacing: "0.3em",
                     color: "#e0e8f0", background: "rgba(255,255,255,0.04)",
                     border: loginError ? "1.5px solid rgba(200,50,50,0.4)" : "1.5px solid rgba(255,255,255,0.1)",
@@ -571,7 +595,7 @@ export default function ATDevelopmentTracker() {
                   }}
                 />
                 {loginError && (
-                  <div style={{ fontSize: 15, color: "#cc4040", marginTop: 6, textAlign: "center" }}>
+                  <div style={{ fontSize: 14, color: "#cc4040", marginTop: 6, textAlign: "center" }}>
                     {loginError}
                   </div>
                 )}
@@ -588,7 +612,7 @@ export default function ATDevelopmentTracker() {
                   ? `linear-gradient(135deg, ${USERS[loginId]?.color || "#e07830"}, ${USERS[loginId]?.color || "#e07830"}cc)`
                   : "rgba(255,255,255,0.04)",
                 color: loginId && loginPin.length >= 4 ? "#fff" : "#4d6888",
-                fontSize: 18, fontWeight: 700, cursor: loginId && loginPin.length >= 4 ? "pointer" : "default",
+                fontSize: 17, fontWeight: 700, cursor: loginId && loginPin.length >= 4 ? "pointer" : "default",
                 transition: "all 0.15s ease",
               }}
             >
@@ -596,7 +620,7 @@ export default function ATDevelopmentTracker() {
             </button>
           </div>
 
-          <div style={{ fontSize: 14, color: "#3a5068", textAlign: "center", marginTop: 16 }}>
+          <div style={{ fontSize: 13, color: "#3a5068", textAlign: "center", marginTop: 16 }}>
             Alpine Trainer Development · PSIA-RM Rocky Mountain
           </div>
         </div>
@@ -625,7 +649,7 @@ export default function ATDevelopmentTracker() {
           borderTop: "3px solid #e07830", borderRadius: "50%",
           animation: "spin 0.8s linear infinite",
         }} />
-        <div style={{ fontSize: 18, fontWeight: 600, color: "#6a8098" }}>
+        <div style={{ fontSize: 17, fontWeight: 600, color: "#6a8098" }}>
           Loading your data...
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -635,7 +659,7 @@ export default function ATDevelopmentTracker() {
 
   // Mark sees all tabs; mentors see only what's been rolled out
   // ── ROLLOUT CONTROL: add tab ids here as you introduce them ──
-  const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities", "video", "timeline"];
+  const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities", "video", "timeline", "feedback"];
   // ROLLOUT OPTIONS — copy/paste the line you want:
   // const MENTOR_VISIBLE_TABS = ["baseline"];
   // const MENTOR_VISIBLE_TABS = ["baseline", "diary"];
@@ -645,19 +669,19 @@ export default function ATDevelopmentTracker() {
   // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities"];
   // const MENTOR_VISIBLE_TABS = ["baseline", "los", "diary", "gates", "activities", "video"];
 
-  const ALL_TABS_LIST = ["baseline", "los", "diary", "gates", "activities", "video", "timeline"];
+  const ALL_TABS_LIST = ["baseline", "los", "diary", "gates", "activities", "video", "timeline", "scores", "feedback"];
   const VISIBLE_TABS = currentUser.role === "candidate" ? ALL_TABS_LIST : MENTOR_VISIBLE_TABS;
 
   // ── Styles ────────────────────────────────────────────
   const inp = {
     width: "100%", background: "rgba(255,255,255,0.04)",
     border: "1px solid rgba(255,255,255,0.1)", borderRadius: 7,
-    padding: "8px 11px", fontSize: 17, color: "#e0e8f0",
+    padding: "8px 11px", fontSize: 16, color: "#e0e8f0",
     outline: "none", fontFamily: "inherit", boxSizing: "border-box",
   };
   const txta = { ...inp, minHeight: 64, resize: "vertical", lineHeight: 1.55 };
   const lbl = {
-    fontSize: 14, color: "#607898", fontWeight: 700,
+    fontSize: 13, color: "#607898", fontWeight: 700,
     textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4, display: "block",
   };
 
@@ -668,7 +692,7 @@ export default function ATDevelopmentTracker() {
       id: uid(), objId: `LO-${String(nextNum).padStart(2, "0")}`,
       objective: "", activity: "", assignedBy: "Chris",
       module: "Technical/MA", gates: [], status: "Not Started",
-      targetDate: "", score: null, notes: "", season: selectedSeason,
+      targetDate: "", score: null, notes: "", season: selectedSeason, linkedLE: "",
     });
   };
 
@@ -685,6 +709,7 @@ export default function ATDevelopmentTracker() {
       ...editingLO,
       gates: (editingLO.gates || []).join(","),
       score: editingLO.score || "",
+      loComments: JSON.stringify(editingLO.loComments || []),
     };
     if (isNew) { apiCreate("LearningObjectives", sheetRow); }
     else { apiUpdate("LearningObjectives", sheetRow); }
@@ -702,7 +727,7 @@ export default function ATDevelopmentTracker() {
   const newEntry = () => {
     setEditingEntry({
       id: uid(), date: today(), seasonWeek: "", location: "", duration: "",
-      moduleFocus: "Technical/MA", flag: "FYI", activeLOIds: [], attachments: [], comments: [],
+      moduleFocus: "Technical/MA", flag: "FYI", activeLOIds: [], activeLEIds: [], attachments: [], comments: [],
       readBy: currentUser ? [{ userId: currentUser.key, timestamp: new Date().toISOString() }] : [],
       season: selectedSeason,
       workedOn: "", observed: "", wentWell: "", struggling: "",
@@ -737,10 +762,34 @@ export default function ATDevelopmentTracker() {
       });
     }
 
+    // Auto-set linked LEs to "In Progress" if they are "Assigned" or "Not Started"
+    const linkedLEIds = editingEntry.activeLEIds || [];
+    if (linkedLEIds.length > 0) {
+      setLeStatus(prev => {
+        let changed = false;
+        const next = { ...prev };
+        linkedLEIds.forEach(leId => {
+          const current = next[leId] || {};
+          if (!current.status || current.status === "Not Started" || current.status === "Assigned") {
+            next[leId] = { ...current, status: "In Progress" };
+            changed = true;
+          }
+        });
+        if (changed) {
+          if (saveTimerRef.current._le) clearTimeout(saveTimerRef.current._le);
+          saveTimerRef.current._le = setTimeout(() => {
+            apiUpdate("GateStatus", { gateId: "_LE_STATUS", leData: JSON.stringify(next) });
+          }, 1500);
+        }
+        return changed ? next : prev;
+      });
+    }
+
     // Sync to Google Sheets
     const sheetRow = {
       ...editingEntry,
       activeLOIds: (editingEntry.activeLOIds || []).join(","),
+      activeLEIds: (editingEntry.activeLEIds || []).join(","),
       attachments: JSON.stringify(editingEntry.attachments || []),
       comments: JSON.stringify(editingEntry.comments || []),
       readBy: JSON.stringify(editingEntry.readBy || []),
@@ -788,10 +837,29 @@ export default function ATDevelopmentTracker() {
   };
 
   // Wrap baseline/gate score setters to trigger save
+  const recordScoreChange = (gateId, who, score, type) => {
+    if (!score || score === 0) return;
+    setScoreHistory(prev => {
+      const entry = { gateId, who, score: Number(score), type, timestamp: new Date().toISOString(), changedBy: currentUser?.key || "unknown" };
+      const next = [...prev, entry];
+      // Debounced save
+      if (saveTimerRef.current._scoreHistory) clearTimeout(saveTimerRef.current._scoreHistory);
+      saveTimerRef.current._scoreHistory = setTimeout(() => {
+        apiUpdate("GateStatus", { gateId: "_SCORE_HISTORY", leData: JSON.stringify(next) });
+      }, 2000);
+      return next;
+    });
+  };
+
   const updateBaselineScore = (gateId, who, val) => {
-    setBaselineScores(prev => ({
-      ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 }
-    }));
+    setBaselineScores(prev => {
+      const oldScore = prev[gateId]?.[who] || 0;
+      const newScore = val ? Number(val) : 0;
+      if (newScore > 0 && newScore !== oldScore) {
+        recordScoreChange(gateId, who, newScore, "baseline");
+      }
+      return { ...prev, [gateId]: { ...prev[gateId], [who]: newScore } };
+    });
     saveGateToSheet(gateId);
   };
 
@@ -801,9 +869,14 @@ export default function ATDevelopmentTracker() {
   };
 
   const updateGateExaminerScore = (gateId, who, val) => {
-    setGateScores(prev => ({
-      ...prev, [gateId]: { ...prev[gateId], [who]: val ? Number(val) : 0 }
-    }));
+    setGateScores(prev => {
+      const oldScore = prev[gateId]?.[who] || 0;
+      const newScore = val ? Number(val) : 0;
+      if (newScore > 0 && newScore !== oldScore) {
+        recordScoreChange(gateId, who, newScore, "gate");
+      }
+      return { ...prev, [gateId]: { ...prev[gateId], [who]: newScore } };
+    });
     saveGateToSheet(gateId);
   };
 
@@ -845,11 +918,11 @@ export default function ATDevelopmentTracker() {
                 width: "100%", textAlign: "left", padding: "7px 10px",
                 background: isOpen ? `${mod.color}0c` : "rgba(255,255,255,0.02)",
                 border: `1px solid ${isOpen ? `${mod.color}25` : "rgba(255,255,255,0.05)"}`,
-                borderRadius: 6, color: "#b0bcc8", fontSize: 15, fontWeight: 600, cursor: "pointer",
+                borderRadius: 6, color: "#b0bcc8", fontSize: 14, fontWeight: 600, cursor: "pointer",
                 display: "flex", justifyContent: "space-between",
               }}>
                 <span>{modName}</span>
-                <span style={{ fontSize: 14, color: "#5a7898" }}>{mod.gates.filter(g => selected.includes(g.id)).length}/{mod.gates.length}</span>
+                <span style={{ fontSize: 13, color: "#7a9ab5" }}>{mod.gates.filter(g => selected.includes(g.id)).length}/{mod.gates.length}</span>
               </button>
               {isOpen && (
                 <div style={{ padding: "4px 0 2px 2px" }}>
@@ -863,7 +936,7 @@ export default function ATDevelopmentTracker() {
                       }}>
                         <input type="checkbox" checked={on} onChange={() => toggle(gate.id)}
                           style={{ marginTop: 2, accentColor: mod.color }} />
-                        <span style={{ fontSize: 15, color: on ? "#d0d8e0" : "#607898", lineHeight: 1.35 }}>
+                        <span style={{ fontSize: 14, color: on ? "#d0d8e0" : "#607898", lineHeight: 1.35 }}>
                           <strong style={{ color: on ? mod.color : "#6a8098" }}>{gate.id}</strong> {gate.criterion}
                         </span>
                       </label>
@@ -880,7 +953,7 @@ export default function ATDevelopmentTracker() {
 
   // ── LO Picker for diary entries ──────────────────────
   const LOPicker = ({ selected, onChange }) => {
-    if (seasonLos.length === 0) return <div style={{ fontSize: 16, color: "#5a7898" }}>No LOs assigned yet — add them in the Learning Objectives tab.</div>;
+    if (seasonLos.length === 0) return <div style={{ fontSize: 15, color: "#7a9ab5" }}>No LOs assigned yet — add them in the Learning Objectives tab.</div>;
     const toggle = (id) => onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -897,7 +970,7 @@ export default function ATDevelopmentTracker() {
               <input type="checkbox" checked={on} onChange={() => toggle(lo.id)}
                 style={{ marginTop: 3, accentColor: mc }} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 16, fontWeight: 600, color: on ? "#d0d8e0" : "#6a8098" }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: on ? "#d0d8e0" : "#6a8098" }}>
                   <span style={{ color: mc }}>{lo.objId}</span> — {lo.objective || "Untitled"}
                 </div>
                 {lo.gates.length > 0 && (
@@ -937,10 +1010,10 @@ export default function ATDevelopmentTracker() {
         <div className="at-container">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f4f8" }}>
+              <span style={{ fontSize: 23, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f4f8" }}>
                 AT Development Tracker
               </span>
-              <span style={{ fontSize: 15, color: "#4d6888", fontWeight: 500 }}>
+              <span style={{ fontSize: 14, color: "#4d6888", fontWeight: 500 }}>
                 Mark · PSIA-RM · Keystone
               </span>
             </div>
@@ -956,23 +1029,23 @@ export default function ATDevelopmentTracker() {
                   width: 22, height: 22, borderRadius: "50%",
                   background: `${currentUser.color}25`, border: `1.5px solid ${currentUser.color}50`,
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 14, fontWeight: 800, color: currentUser.color,
+                  fontSize: 13, fontWeight: 800, color: currentUser.color,
                 }}>
                   {currentUser.name[0]}
                 </div>
-                <span style={{ fontSize: 15, fontWeight: 700, color: currentUser.color }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: currentUser.color }}>
                   {currentUser.name}
                 </span>
-                <span style={{ fontSize: 12, color: "#5a7898", textTransform: "uppercase", fontWeight: 600 }}>
+                <span style={{ fontSize: 11, color: "#7a9ab5", textTransform: "uppercase", fontWeight: 600 }}>
                   {currentUser.role === "candidate" ? "Candidate" : "Mentor"}
                 </span>
               </div>
               <button
                 onClick={handleLogout}
                 style={{
-                  padding: "5px 8px", borderRadius: 5, fontSize: 14, fontWeight: 600,
+                  padding: "5px 8px", borderRadius: 5, fontSize: 13, fontWeight: 600,
                   background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
-                  color: "#5a7898", cursor: "pointer",
+                  color: "#7a9ab5", cursor: "pointer",
                 }}
               >
                 Sign Out
@@ -990,12 +1063,14 @@ export default function ATDevelopmentTracker() {
                 { id: "activities", label: `Activities (${Object.values(leStatus).filter(s => s.status === "Complete").length}/${ALL_LEs.length})` },
                 { id: "video", label: "Video Progress" },
                 { id: "timeline", label: "Timeline" },
+                { id: "scores", label: "Score Progress" },
+                { id: "feedback", label: "Clinic Feedback" },
               ].filter(t => VISIBLE_TABS.includes(t.id)).map(t => (
                 <button key={t.id} onClick={() => { setTab(t.id); setGateFilter(null); }} style={{
-                  padding: "7px 13px", borderRadius: 6, fontSize: 15, fontWeight: 600,
+                  padding: "7px 13px", borderRadius: 6, fontSize: 14, fontWeight: 600,
                   border: tab === t.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.07)",
                   background: tab === t.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)",
-                  color: tab === t.id ? "#e8a050" : "#5a7898",
+                  color: tab === t.id ? "#e8a050" : "#7a9ab5",
                   cursor: "pointer",
                 }}>
                   {t.label}
@@ -1011,26 +1086,26 @@ export default function ATDevelopmentTracker() {
               padding: "6px 10px", borderRadius: 6,
               background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.04)",
             }}>
-              <span style={{ fontSize: 12, color: "#5a7898", fontWeight: 600 }}>Season:</span>
+              <span style={{ fontSize: 11, color: "#7a9ab5", fontWeight: 600 }}>Season:</span>
               {SEASONS.map(s => (
                 <button
                   key={s}
                   onClick={() => { setSelectedSeason(s); setShowAllSeasons(false); }}
                   style={{
-                    padding: "3px 10px", borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: "pointer",
                     background: !showAllSeasons && selectedSeason === s ? "rgba(224,120,48,0.12)" : "rgba(255,255,255,0.02)",
                     border: `1.5px solid ${!showAllSeasons && selectedSeason === s ? "rgba(224,120,48,0.4)" : "rgba(255,255,255,0.06)"}`,
-                    color: !showAllSeasons && selectedSeason === s ? "#e8a050" : "#5a7898",
+                    color: !showAllSeasons && selectedSeason === s ? "#e8a050" : "#7a9ab5",
                   }}
                 >{s}</button>
               ))}
               <button
                 onClick={() => setShowAllSeasons(!showAllSeasons)}
                 style={{
-                  padding: "3px 10px", borderRadius: 5, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  padding: "3px 10px", borderRadius: 5, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   background: showAllSeasons ? "rgba(138,112,184,0.12)" : "rgba(255,255,255,0.02)",
                   border: `1.5px solid ${showAllSeasons ? "rgba(138,112,184,0.4)" : "rgba(255,255,255,0.06)"}`,
-                  color: showAllSeasons ? "#a890d0" : "#5a7898",
+                  color: showAllSeasons ? "#a890d0" : "#7a9ab5",
                   marginLeft: 4,
                 }}
               >{showAllSeasons ? "✓ All Seasons" : "All Seasons"}</button>
@@ -1078,7 +1153,7 @@ export default function ATDevelopmentTracker() {
               background: "rgba(224,120,48,0.05)",
               border: "1px solid rgba(224,120,48,0.15)",
             }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#e8a050", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#e8a050", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>
                 Since your last visit
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -1088,7 +1163,7 @@ export default function ATDevelopmentTracker() {
                     style={{
                       padding: "6px 12px", borderRadius: 6, cursor: "pointer",
                       background: "rgba(230,80,40,0.1)", border: "1px solid rgba(230,80,40,0.25)",
-                      color: "#e05028", fontSize: 14, fontWeight: 700,
+                      color: "#e05028", fontSize: 13, fontWeight: 700,
                       display: "flex", alignItems: "center", gap: 5,
                     }}
                   >
@@ -1096,7 +1171,7 @@ export default function ATDevelopmentTracker() {
                       width: 20, height: 20, borderRadius: "50%",
                       background: "#e05028", color: "#fff",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 12, fontWeight: 800,
+                      fontSize: 11, fontWeight: 800,
                     }}>{needsAttention.length}</span>
                     need{needsAttention.length === 1 ? "s" : ""} your feedback
                   </button>
@@ -1107,7 +1182,7 @@ export default function ATDevelopmentTracker() {
                     style={{
                       padding: "6px 12px", borderRadius: 6, cursor: "pointer",
                       background: "rgba(48,136,204,0.08)", border: "1px solid rgba(48,136,204,0.2)",
-                      color: "#3088cc", fontSize: 14, fontWeight: 700,
+                      color: "#3088cc", fontSize: 13, fontWeight: 700,
                       display: "flex", alignItems: "center", gap: 5,
                     }}
                   >
@@ -1115,7 +1190,7 @@ export default function ATDevelopmentTracker() {
                       width: 20, height: 20, borderRadius: "50%",
                       background: "#3088cc", color: "#fff",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 12, fontWeight: 800,
+                      fontSize: 11, fontWeight: 800,
                     }}>{unread.length}</span>
                     unread {unread.length === 1 ? "entry" : "entries"}
                   </button>
@@ -1126,7 +1201,7 @@ export default function ATDevelopmentTracker() {
                     style={{
                       padding: "6px 12px", borderRadius: 6, cursor: "pointer",
                       background: "rgba(40,168,88,0.08)", border: "1px solid rgba(40,168,88,0.2)",
-                      color: "#28a858", fontSize: 14, fontWeight: 700,
+                      color: "#28a858", fontSize: 13, fontWeight: 700,
                       display: "flex", alignItems: "center", gap: 5,
                     }}
                   >
@@ -1139,7 +1214,7 @@ export default function ATDevelopmentTracker() {
                     style={{
                       padding: "6px 12px", borderRadius: 6, cursor: "pointer",
                       background: "rgba(200,170,50,0.08)", border: "1px solid rgba(200,170,50,0.2)",
-                      color: "#c8aa32", fontSize: 14, fontWeight: 700,
+                      color: "#c8aa32", fontSize: 13, fontWeight: 700,
                       display: "flex", alignItems: "center", gap: 5,
                     }}
                   >
@@ -1158,27 +1233,42 @@ export default function ATDevelopmentTracker() {
           const linkedEntries = entries.filter(e => (e.activeLOIds || []).includes(lo.id));
           return (
             <div>
-              <button onClick={() => setViewingLO(null)} style={{ background: "none", border: "none", color: "#5a7898", fontSize: 16, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Back</button>
+              <button onClick={() => setViewingLO(null)} style={{ background: "none", border: "none", color: "#7a9ab5", fontSize: 15, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Back</button>
               <Card>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
                   <div>
-                    <span style={{ fontSize: 20, fontWeight: 700, color: mc }}>{lo.objId}</span>
+                    <span style={{ fontSize: 19, fontWeight: 700, color: mc }}>{lo.objId}</span>
                     <StatusBadge status={lo.status} />
                   </div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button onClick={() => setEditingLO({ ...lo, gates: [...lo.gates] })} style={{ padding: "4px 10px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Edit</button>
-                    <button onClick={() => { if (confirm("Delete this LO?")) deleteLO(lo.id); }} style={{ padding: "4px 10px", borderRadius: 5, background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.2)", color: "#b04040", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    {currentUser?.role === "mentor" ? (
+                      <>
+                        <button onClick={() => setEditingLO({ ...lo, gates: [...lo.gates] })} style={{ padding: "4px 10px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                        <button onClick={() => { if (confirm("Delete this LO?")) deleteLO(lo.id); }} style={{ padding: "4px 10px", borderRadius: 5, background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.2)", color: "#b04040", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                      </>
+                    ) : (
+                      <select value={lo.status} onChange={ev => {
+                        const newStatus = ev.target.value;
+                        setLos(prev => prev.map(l => l.id === lo.id ? { ...l, status: newStatus } : l));
+                        setViewingLO(prev => prev ? { ...prev, status: newStatus } : prev);
+                        apiUpdate("LearningObjectives", { ...lo, status: newStatus, gates: (lo.gates || []).join(","), score: lo.score || "", loComments: JSON.stringify(lo.loComments || []) });
+                      }} style={{ padding: "4px 8px", borderRadius: 5, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                        background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5",
+                        fontFamily: "inherit", appearance: "auto", outline: "none" }}>
+                        {["Not Started", "In Progress", "Ready for Review"].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    )}
                   </div>
                 </div>
                 <SectionLabel>Objective</SectionLabel>
-                <p style={{ fontSize: 17, color: "#c0ccd8", lineHeight: 1.6, margin: "0 0 14px" }}>{lo.objective || "—"}</p>
+                <p style={{ fontSize: 16, color: "#c0ccd8", lineHeight: 1.6, margin: "0 0 14px" }}>{lo.objective || "—"}</p>
                 <SectionLabel>Mentor-Assigned Activity</SectionLabel>
-                <p style={{ fontSize: 17, color: "#c0ccd8", lineHeight: 1.6, margin: "0 0 14px" }}>{lo.activity || "—"}</p>
+                <p style={{ fontSize: 16, color: "#c0ccd8", lineHeight: 1.6, margin: "0 0 14px" }}>{lo.activity || "—"}</p>
                 <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14 }}>
-                  <div><SectionLabel>Assigned By</SectionLabel><span style={{ fontSize: 17, color: "#c0ccd8" }}>{lo.assignedBy}</span></div>
-                  <div><SectionLabel>Module</SectionLabel><span style={{ fontSize: 17, color: mc }}>{lo.module}</span></div>
-                  <div><SectionLabel>Target Date</SectionLabel><span style={{ fontSize: 17, color: "#c0ccd8" }}>{lo.targetDate || "—"}</span></div>
-                  {lo.score && <div><SectionLabel>Fitts & Posner</SectionLabel><span style={{ fontSize: 17, color: lo.score >= 4 ? "#28a858" : "#e07830" }}>{lo.score} — {FITTS_POSNER.find(f => f.score === lo.score)?.label}</span></div>}
+                  <div><SectionLabel>Assigned By</SectionLabel><span style={{ fontSize: 16, color: "#c0ccd8" }}>{lo.assignedBy}</span></div>
+                  <div><SectionLabel>Module</SectionLabel><span style={{ fontSize: 16, color: mc }}>{lo.module}</span></div>
+                  <div><SectionLabel>Target Date</SectionLabel><span style={{ fontSize: 16, color: "#c0ccd8" }}>{lo.targetDate || "—"}</span></div>
+                  {lo.score && <div><SectionLabel>Fitts & Posner</SectionLabel><span style={{ fontSize: 16, color: lo.score >= 4 ? "#28a858" : "#e07830" }}>{lo.score} — {FITTS_POSNER.find(f => f.score === lo.score)?.label}</span></div>}
                 </div>
                 {lo.gates.length > 0 && (
                   <div style={{ marginBottom: 14 }}>
@@ -1188,7 +1278,38 @@ export default function ATDevelopmentTracker() {
                     </div>
                   </div>
                 )}
-                {lo.notes && <><SectionLabel>Notes</SectionLabel><p style={{ fontSize: 16, color: "#7a9ab5", lineHeight: 1.55, margin: 0, whiteSpace: "pre-wrap" }}>{lo.notes}</p></>}
+                {(lo.loComments || []).length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <SectionLabel>Notes & Discussion ({lo.loComments.length})</SectionLabel>
+                    {lo.loComments.map((c, ci) => {
+                      const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
+                      return (
+                        <div key={ci} style={{
+                          display: "flex", gap: 8, marginBottom: 6,
+                          padding: "8px 10px", borderRadius: 6,
+                          background: `${commenter.color}06`, border: `1px solid ${commenter.color}12`,
+                        }}>
+                          <div style={{
+                            width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                            background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 10, fontWeight: 800, color: commenter.color,
+                          }}>{commenter.name[0]}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                              <span style={{ fontSize: 10, color: "#4d6888" }}>
+                                {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 14, color: "#d0d8e0", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {lo.notes && <><SectionLabel>Legacy Notes</SectionLabel><p style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.55, margin: 0, whiteSpace: "pre-wrap" }}>{lo.notes}</p></>}
                 {linkedEntries.length > 0 && (
                   <div style={{ marginTop: 16 }}>
                     <SectionLabel>Diary Entries ({linkedEntries.length})</SectionLabel>
@@ -1196,9 +1317,9 @@ export default function ATDevelopmentTracker() {
                       <div key={e.id} onClick={() => { setViewingLO(null); setViewingEntry(e); }} style={{
                         padding: "8px 10px", borderRadius: 6, marginBottom: 4, cursor: "pointer",
                         background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
-                        fontSize: 16, color: "#7a9ab5",
+                        fontSize: 15, color: "#7a9ab5",
                       }}>
-                        <strong style={{ color: "#a0b0c0" }}>{e.date}</strong> — {e.workedOn?.slice(0, 80) || "No description"}{e.workedOn?.length > 80 ? "…" : ""}
+                        <strong style={{ color: "#d0d8e0" }}>{e.date}</strong> — {e.workedOn?.slice(0, 80) || "No description"}{e.workedOn?.length > 80 ? "…" : ""}
                       </div>
                     ))}
                   </div>
@@ -1214,9 +1335,9 @@ export default function ATDevelopmentTracker() {
           const update = (f, v) => setEditingLO(p => ({ ...p, [f]: v }));
           return (
             <div>
-              <button onClick={() => setEditingLO(null)} style={{ background: "none", border: "none", color: "#5a7898", fontSize: 16, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Cancel</button>
+              <button onClick={() => setEditingLO(null)} style={{ background: "none", border: "none", color: "#7a9ab5", fontSize: 15, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Cancel</button>
               <Card>
-                <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 16, color: "#e0e8f0" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, color: "#e0e8f0" }}>
                   {los.find(l => l.id === lo.id) ? `Edit ${lo.objId}` : "New Learning Objective"}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
@@ -1245,15 +1366,44 @@ export default function ATDevelopmentTracker() {
                   <label style={lbl}>Mentor-Assigned Activity (how to achieve it)</label>
                   <textarea value={lo.activity} onChange={e => update("activity", e.target.value)} placeholder="Activity — mentor's own design or drawn from AT Guide suggested activities..." style={txta} />
                 </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={lbl}>Associated Learning Experience (optional)</label>
+                  <select value={lo.linkedLE || ""} onChange={e => update("linkedLE", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                    <option value="">— None —</option>
+                    {Object.entries(LEARNING_EXPERIENCES).map(([modName, mod]) => {
+                      const assignedItems = mod.items.filter(le => {
+                        const s = leStatus[le.id] || {};
+                        return s.status === "Assigned" || s.status === "In Progress" || s.status === "Ready for Review";
+                      });
+                      if (assignedItems.length === 0) return null;
+                      return (
+                        <optgroup key={modName} label={modName}>
+                          {assignedItems.map(le => (
+                            <option key={le.id} value={le.id}>{le.id} — {le.title}</option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                  {ALL_LEs.filter(le => { const s = leStatus[le.id] || {}; return s.status === "Assigned" || s.status === "In Progress"; }).length === 0 && (
+                    <div style={{ fontSize: 11, color: "#4d6888", marginTop: 3 }}>No LEs assigned yet — assign them in the Activities tab first.</div>
+                  )}
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
                   <div>
                     <label style={lbl}>Status</label>
                     <select value={lo.status} onChange={e => update("status", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
                       {currentUser?.role === "candidate"
                         ? ["Not Started", "In Progress", "Ready for Review"].map(s => <option key={s} value={s}>{s}</option>)
-                        : LO_STATUSES.map(s => <option key={s} value={s}>{s}</option>)
+                        : (lo.score && lo.score >= 1
+                          ? LO_STATUSES.map(s => <option key={s} value={s}>{s}</option>)
+                          : ["Not Started", "In Progress", "Ready for Review"].map(s => <option key={s} value={s}>{s}</option>)
+                        )
                       }
                     </select>
+                    {currentUser?.role === "mentor" && lo.status === "Ready for Review" && !lo.score && (
+                      <div style={{ fontSize: 11, color: "#c8aa32", marginTop: 3 }}>Score first, then mark as Verified</div>
+                    )}
                   </div>
                   <div>
                     <label style={lbl}>Target Date</label>
@@ -1261,10 +1411,19 @@ export default function ATDevelopmentTracker() {
                   </div>
                   <div>
                     <label style={lbl}>Fitts & Posner Score</label>
-                    <select value={lo.score || ""} onChange={e => update("score", e.target.value ? Number(e.target.value) : null)} style={{ ...inp, cursor: "pointer" }}>
-                      <option value="">—</option>
-                      {FITTS_POSNER.map(f => <option key={f.score} value={f.score}>{f.score} — {f.label}</option>)}
-                    </select>
+                    {currentUser?.role === "mentor" ? (
+                      <select value={lo.score || ""} onChange={e => update("score", e.target.value ? Number(e.target.value) : null)} style={{ ...inp, cursor: "pointer" }}>
+                        <option value="">—</option>
+                        {FITTS_POSNER.map(f => <option key={f.score} value={f.score}>{f.score} — {f.label}</option>)}
+                      </select>
+                    ) : (
+                      <div style={{
+                        ...inp, display: "flex", alignItems: "center",
+                        color: lo.score ? (lo.score >= 4 ? "#28a858" : "#e07830") : "#4d6888",
+                      }}>
+                        {lo.score ? `${lo.score} — ${FITTS_POSNER.find(f => f.score === lo.score)?.label || ""}` : "Scored by mentor"}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ marginBottom: 14 }}>
@@ -1274,13 +1433,77 @@ export default function ATDevelopmentTracker() {
                   </div>
                 </div>
                 <div style={{ marginBottom: 14 }}>
-                  <label style={lbl}>Notes</label>
-                  <textarea value={lo.notes} onChange={e => update("notes", e.target.value)} placeholder="Additional context, mentor notes..." style={txta} />
+                  <label style={lbl}>Notes & Discussion</label>
+                  {/* Existing notes as attributed comments */}
+                  {(lo.loComments || []).map((c, ci) => {
+                    const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
+                    return (
+                      <div key={ci} style={{
+                        display: "flex", gap: 8, marginBottom: 6,
+                        padding: "8px 10px", borderRadius: 6,
+                        background: `${commenter.color}06`, border: `1px solid ${commenter.color}12`,
+                      }}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                          background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 10, fontWeight: 800, color: commenter.color,
+                        }}>{commenter.name[0]}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                            <span style={{ fontSize: 10, color: "#4d6888" }}>
+                              {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 14, color: "#d0d8e0", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                    <div style={{
+                      width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                      background: `${currentUser?.color || "#7a9ab5"}20`,
+                      border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 10, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
+                    }}>{currentUser?.name?.[0] || "?"}</div>
+                    <textarea
+                      id="lo-comment-input"
+                      placeholder="Add a note..."
+                      style={txta}
+                      onKeyDown={ev => {
+                        if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+                          const el = document.getElementById("lo-comment-input");
+                          const text = el.value.trim();
+                          if (!text) return;
+                          const newComment = { userId: currentUser?.key || "unknown", text, timestamp: new Date().toISOString() };
+                          update("loComments", [...(lo.loComments || []), newComment]);
+                          el.value = "";
+                        }
+                      }}
+                    />
+                    <button onClick={() => {
+                      const el = document.getElementById("lo-comment-input");
+                      const text = el.value.trim();
+                      if (!text) return;
+                      const newComment = { userId: currentUser?.key || "unknown", text, timestamp: new Date().toISOString() };
+                      update("loComments", [...(lo.loComments || []), newComment]);
+                      el.value = "";
+                    }} style={{
+                      padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
+                      background: `${currentUser?.color || "#3088cc"}12`,
+                      border: `1px solid ${currentUser?.color || "#3088cc"}30`,
+                      color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
+                    }}>Post</button>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#3a5068", marginTop: 3 }}>Ctrl+Enter to post</div>
                 </div>
                 <button onClick={saveLO} style={{
                   width: "100%", padding: "11px", borderRadius: 7, border: "none",
                   background: "linear-gradient(135deg, #e07830, #c06020)", color: "#fff",
-                  fontSize: 17, fontWeight: 700, cursor: "pointer",
+                  fontSize: 16, fontWeight: 700, cursor: "pointer",
                 }}>
                   Save Learning Objective
                 </button>
@@ -1306,19 +1529,23 @@ export default function ATDevelopmentTracker() {
           ].filter(s => s.val);
           return (
             <div>
-              <button onClick={() => setViewingEntry(null)} style={{ background: "none", border: "none", color: "#5a7898", fontSize: 16, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Back</button>
+              <button onClick={() => setViewingEntry(null)} style={{ background: "none", border: "none", color: "#7a9ab5", fontSize: 15, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Back</button>
               <Card>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div>
-                    <div style={{ fontSize: 21, fontWeight: 700 }}>{e.date}</div>
-                    <div style={{ fontSize: 15, color: "#5a7898", marginTop: 2 }}>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>{e.date}</div>
+                    <div style={{ fontSize: 14, color: "#7a9ab5", marginTop: 2 }}>
                       {[e.seasonWeek, e.location, e.duration].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
-                    <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 14, fontWeight: 700, background: fc.bg, border: `1px solid ${fc.border}`, color: fc.text }}>{e.flag}</span>
-                    <button onClick={() => setEditingEntry({ ...e, activeLOIds: [...(e.activeLOIds || [])], attachments: [...(e.attachments || [])], comments: [...(e.comments || [])], readBy: [...(e.readBy || [])] })} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Edit</button>
-                    <button onClick={() => { if (confirm("Delete?")) deleteEntry(e.id); }} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.2)", color: "#b04040", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                    <span style={{ padding: "3px 8px", borderRadius: 5, fontSize: 13, fontWeight: 700, background: fc.bg, border: `1px solid ${fc.border}`, color: fc.text }}>{e.flag}</span>
+                    {currentUser?.role === "candidate" && (
+                      <>
+                        <button onClick={() => setEditingEntry({ ...e, activeLOIds: [...(e.activeLOIds || [])], activeLEIds: [...(e.activeLEIds || [])], attachments: [...(e.attachments || [])], comments: [...(e.comments || [])], readBy: [...(e.readBy || [])] })} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#7a9ab5", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Edit</button>
+                        <button onClick={() => { if (confirm("Delete?")) deleteEntry(e.id); }} style={{ padding: "3px 9px", borderRadius: 5, background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.2)", color: "#b04040", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Delete</button>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1328,7 +1555,7 @@ export default function ATDevelopmentTracker() {
                   padding: "8px 10px", borderRadius: 7,
                   background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)",
                 }}>
-                  <span style={{ fontSize: 13, color: "#5a7898", fontWeight: 600 }}>Seen by:</span>
+                  <span style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 600 }}>Seen by:</span>
                   <div style={{ display: "flex", gap: 4 }}>
                     {["mark", "chris", "gates", "mike"].map(userId => {
                       const user = USERS[userId];
@@ -1347,7 +1574,7 @@ export default function ATDevelopmentTracker() {
                             background: isRead ? `${user.color}25` : "rgba(255,255,255,0.03)",
                             border: `2px solid ${isRead ? `${user.color}60` : "rgba(255,255,255,0.06)"}`,
                             display: "flex", alignItems: "center", justifyContent: "center",
-                            fontSize: 12, fontWeight: 800,
+                            fontSize: 11, fontWeight: 800,
                             color: isRead ? user.color : "#3a5068",
                             position: "relative",
                             cursor: "default",
@@ -1360,7 +1587,7 @@ export default function ATDevelopmentTracker() {
                               width: 12, height: 12, borderRadius: "50%",
                               background: "#28a858", border: "2px solid #0d1828",
                               display: "flex", alignItems: "center", justifyContent: "center",
-                              fontSize: 8, color: "#fff",
+                              fontSize: 7, color: "#fff",
                             }}>💬</div>
                           )}
                         </div>
@@ -1375,7 +1602,7 @@ export default function ATDevelopmentTracker() {
                     {linkedLOs.map(lo => {
                       const mc = MODULE_COLORS_SIMPLE[lo.module] || "#7a9ab5";
                       return (
-                        <div key={lo.id} style={{ fontSize: 16, color: "#a0b0c0", marginBottom: 3 }}>
+                        <div key={lo.id} style={{ fontSize: 15, color: "#d0d8e0", marginBottom: 3 }}>
                           <span style={{ color: mc, fontWeight: 700 }}>{lo.objId}</span> — {lo.objective?.slice(0, 100) || "Untitled"}
                         </div>
                       );
@@ -1393,7 +1620,7 @@ export default function ATDevelopmentTracker() {
                 {sections.map(s => (
                   <div key={s.label} style={{ marginBottom: 14 }}>
                     <SectionLabel>{s.label}</SectionLabel>
-                    <div style={{ fontSize: 17, color: "#b0bcc8", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{s.val}</div>
+                    <div style={{ fontSize: 16, color: "#b0bcc8", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{s.val}</div>
                   </div>
                 ))}
                 {(e.attachments || []).length > 0 && (
@@ -1441,28 +1668,28 @@ export default function ATDevelopmentTracker() {
                                 position: "absolute", width: 20, height: 14, borderRadius: 3,
                                 background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center",
                               }}>
-                                <span style={{ fontSize: 12, color: "#fff" }}>▶</span>
+                                <span style={{ fontSize: 11, color: "#fff" }}>▶</span>
                               </div>
                             </div>
                           ) : (
-                            <span style={{ fontSize: 22, flexShrink: 0 }}>{icon}</span>
+                            <span style={{ fontSize: 21, flexShrink: 0 }}>{icon}</span>
                           )}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{
-                              fontSize: 16, fontWeight: 600,
+                              fontSize: 15, fontWeight: 600,
                               color: isYT ? "#cc3030" : isDoc ? "#4285f4" : "#7a9ab5",
                               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                             }}>
                               {att.label || (isYT ? "YouTube Video" : isDoc ? "Document" : "Link")}
                             </div>
                             <div style={{
-                              fontSize: 14, color: "#5a7898",
+                              fontSize: 13, color: "#7a9ab5",
                               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                             }}>
                               {att.url}
                             </div>
                           </div>
-                          <span style={{ fontSize: 14, color: "#4d6888", flexShrink: 0 }}>↗</span>
+                          <span style={{ fontSize: 13, color: "#4d6888", flexShrink: 0 }}>↗</span>
                         </a>
                       );
                     })}
@@ -1477,7 +1704,7 @@ export default function ATDevelopmentTracker() {
                   <SectionLabel>Comments ({(e.comments || []).length})</SectionLabel>
 
                   {(e.comments || []).length === 0 && (
-                    <div style={{ fontSize: 16, color: "#4d6888", marginBottom: 12, fontStyle: "italic" }}>
+                    <div style={{ fontSize: 15, color: "#4d6888", marginBottom: 12, fontStyle: "italic" }}>
                       No comments yet — mentors and Mark can leave feedback here.
                     </div>
                   )}
@@ -1495,19 +1722,19 @@ export default function ATDevelopmentTracker() {
                           width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
                           background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
                           display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 14, fontWeight: 800, color: commenter.color,
+                          fontSize: 13, fontWeight: 800, color: commenter.color,
                         }}>
                           {commenter.name[0]}
                         </div>
                         <div style={{ flex: 1 }}>
                           <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 3 }}>
-                            <span style={{ fontSize: 16, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
-                            <span style={{ fontSize: 13, color: "#4d6888" }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                            <span style={{ fontSize: 12, color: "#4d6888" }}>
                               {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
                               {c.timestamp ? " · " + new Date(c.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                             </span>
                           </div>
-                          <div style={{ fontSize: 16, color: "#b0bcc8", lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
+                          <div style={{ fontSize: 15, color: "#b0bcc8", lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
                             {c.text}
                           </div>
                         </div>
@@ -1520,7 +1747,7 @@ export default function ATDevelopmentTracker() {
                               saveEntryComments(e.id, updated.comments);
                             }}
                             style={{
-                              padding: "2px 5px", borderRadius: 3, fontSize: 13, fontWeight: 600,
+                              padding: "2px 5px", borderRadius: 3, fontSize: 12, fontWeight: 600,
                               background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.12)",
                               color: "#b04040", cursor: "pointer", flexShrink: 0, alignSelf: "flex-start",
                             }}
@@ -1537,7 +1764,7 @@ export default function ATDevelopmentTracker() {
                       background: `${currentUser?.color || "#7a9ab5"}20`,
                       border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 14, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
+                      fontSize: 13, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
                     }}>
                       {currentUser?.name?.[0] || "?"}
                     </div>
@@ -1545,7 +1772,7 @@ export default function ATDevelopmentTracker() {
                       id={`comment-${e.id}`}
                       placeholder={currentUser?.role === "mentor" ? "Leave feedback for Mark..." : "Add a note or respond to mentor feedback..."}
                       style={{
-                        flex: 1, minHeight: 40, padding: "8px 10px", fontSize: 16, color: "#c0ccd8",
+                        flex: 1, minHeight: 40, padding: "8px 10px", fontSize: 15, color: "#c0ccd8",
                         background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                         borderRadius: 8, outline: "none", fontFamily: "inherit", resize: "vertical",
                         lineHeight: 1.5, boxSizing: "border-box",
@@ -1585,7 +1812,7 @@ export default function ATDevelopmentTracker() {
                         textarea.value = "";
                       }}
                       style={{
-                        padding: "8px 14px", borderRadius: 7, fontSize: 15, fontWeight: 700,
+                        padding: "8px 14px", borderRadius: 7, fontSize: 14, fontWeight: 700,
                         background: `${currentUser?.color || "#3088cc"}15`,
                         border: `1px solid ${currentUser?.color || "#3088cc"}35`,
                         color: currentUser?.color || "#3088cc",
@@ -1595,7 +1822,7 @@ export default function ATDevelopmentTracker() {
                       Post
                     </button>
                   </div>
-                  <div style={{ fontSize: 13, color: "#3a5068", marginTop: 4 }}>
+                  <div style={{ fontSize: 12, color: "#3a5068", marginTop: 4 }}>
                     Ctrl+Enter to post quickly
                   </div>
                 </div>
@@ -1611,14 +1838,20 @@ export default function ATDevelopmentTracker() {
           const upd = (f, v) => setEditingEntry(p => ({ ...p, [f]: v }));
           return (
             <div>
-              <button onClick={() => setEditingEntry(null)} style={{ background: "none", border: "none", color: "#5a7898", fontSize: 16, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Cancel</button>
+              <button onClick={() => setEditingEntry(null)} style={{ background: "none", border: "none", color: "#7a9ab5", fontSize: 15, cursor: "pointer", padding: "0 0 10px", fontWeight: 600 }}>← Cancel</button>
               <Card>
-                <div style={{ fontSize: 19, fontWeight: 700, marginBottom: 16 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>
                   {entries.find(x => x.id === e.id) ? "Edit Entry" : "New Diary Entry"}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
                   <div><label style={lbl}>Date</label><input type="date" value={e.date} onChange={ev => upd("date", ev.target.value)} style={inp} /></div>
-                  <div><label style={lbl}>Season / Week</label><input value={e.seasonWeek} onChange={ev => upd("seasonWeek", ev.target.value)} placeholder="e.g. 25/26 — Week 4" style={inp} /></div>
+                  <div>
+                    <label style={lbl}>Season</label>
+                    <select value={e.season || selectedSeason} onChange={ev => upd("season", ev.target.value)} style={{ ...inp, cursor: "pointer" }}>
+                      {SEASONS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div><label style={lbl}>Week / Period</label><input value={e.seasonWeek} onChange={ev => upd("seasonWeek", ev.target.value)} placeholder="e.g. Week 4" style={inp} /></div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
                   <div><label style={lbl}>Location / Terrain</label><input value={e.location} onChange={ev => upd("location", ev.target.value)} placeholder="e.g. Keystone — Bergman Bowl" style={inp} /></div>
@@ -1630,10 +1863,10 @@ export default function ATDevelopmentTracker() {
                     <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
                       {MODULE_KEYS.map(m => (
                         <button key={m} onClick={() => upd("moduleFocus", m)} style={{
-                          padding: "5px 9px", borderRadius: 5, fontSize: 14, fontWeight: 600, cursor: "pointer",
+                          padding: "5px 9px", borderRadius: 5, fontSize: 13, fontWeight: 600, cursor: "pointer",
                           border: e.moduleFocus === m ? `1.5px solid ${MODULE_COLORS_SIMPLE[m]}` : "1.5px solid rgba(255,255,255,0.06)",
                           background: e.moduleFocus === m ? `${MODULE_COLORS_SIMPLE[m]}14` : "rgba(255,255,255,0.015)",
-                          color: e.moduleFocus === m ? MODULE_COLORS_SIMPLE[m] : "#5a7898",
+                          color: e.moduleFocus === m ? MODULE_COLORS_SIMPLE[m] : "#7a9ab5",
                         }}>{m}</button>
                       ))}
                     </div>
@@ -1645,10 +1878,10 @@ export default function ATDevelopmentTracker() {
                         const fc = FLAG_COLORS[f];
                         return (
                           <button key={f} onClick={() => upd("flag", f)} style={{
-                            padding: "5px 9px", borderRadius: 5, fontSize: 14, fontWeight: 600, cursor: "pointer",
+                            padding: "5px 9px", borderRadius: 5, fontSize: 13, fontWeight: 600, cursor: "pointer",
                             border: e.flag === f ? `1.5px solid ${fc.border}` : "1.5px solid rgba(255,255,255,0.06)",
                             background: e.flag === f ? fc.bg : "rgba(255,255,255,0.015)",
-                            color: e.flag === f ? fc.text : "#5a7898",
+                            color: e.flag === f ? fc.text : "#7a9ab5",
                           }}>{f}</button>
                         );
                       })}
@@ -1659,6 +1892,43 @@ export default function ATDevelopmentTracker() {
                   <label style={lbl}>Link to Active Learning Objectives</label>
                   <div style={{ padding: "10px", background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.04)", borderRadius: 8 }}>
                     <LOPicker selected={e.activeLOIds || []} onChange={ids => upd("activeLOIds", ids)} />
+                  </div>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={lbl}>Link to Learning Experiences</label>
+                  <div style={{ padding: "10px", background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.04)", borderRadius: 8 }}>
+                    {ALL_LEs.filter(le => {
+                      const s = leStatus[le.id] || {};
+                      return s.status === "Assigned" || s.status === "In Progress" || s.status === "Ready for Review";
+                    }).length === 0 ? (
+                      <div style={{ fontSize: 14, color: "#7a9ab5" }}>No LEs assigned yet — mentors assign them in the Activities tab.</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        {ALL_LEs.filter(le => {
+                          const s = leStatus[le.id] || {};
+                          return s.status === "Assigned" || s.status === "In Progress" || s.status === "Ready for Review";
+                        }).map(le => {
+                          const on = (e.activeLEIds || []).includes(le.id);
+                          const modEntry = Object.entries(LEARNING_EXPERIENCES).find(([, mod]) => mod.items.some(i => i.id === le.id));
+                          const mc = modEntry ? modEntry[1].color : "#7a9ab5";
+                          return (
+                            <label key={le.id} style={{
+                              display: "flex", alignItems: "flex-start", gap: 8, padding: "6px 8px",
+                              borderRadius: 6, cursor: "pointer",
+                              background: on ? `${mc}10` : "rgba(255,255,255,0.015)",
+                              border: `1px solid ${on ? `${mc}30` : "rgba(255,255,255,0.04)"}`,
+                            }}>
+                              <input type="checkbox" checked={on}
+                                onChange={() => upd("activeLEIds", on ? (e.activeLEIds || []).filter(x => x !== le.id) : [...(e.activeLEIds || []), le.id])}
+                                style={{ marginTop: 2, accentColor: mc }} />
+                              <span style={{ fontSize: 14, color: on ? "#d0d8e0" : "#7a9ab5", lineHeight: 1.35 }}>
+                                <strong style={{ color: on ? mc : "#6a8098" }}>{le.id}</strong> {le.title}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
                 {[
@@ -1694,16 +1964,16 @@ export default function ATDevelopmentTracker() {
                               padding: "7px 10px", marginBottom: 4, borderRadius: 6,
                               background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
                             }}>
-                              <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+                              <span style={{ fontSize: 17, flexShrink: 0 }}>{icon}</span>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{
-                                  fontSize: 15, fontWeight: 600, color: "#a0b0c0",
+                                  fontSize: 14, fontWeight: 600, color: "#d0d8e0",
                                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                                 }}>
                                   {att.label || att.url}
                                 </div>
                                 <div style={{
-                                  fontSize: 14, color: "#5a7898",
+                                  fontSize: 13, color: "#7a9ab5",
                                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                                 }}>
                                   {att.url}
@@ -1716,7 +1986,7 @@ export default function ATDevelopmentTracker() {
                                   upd("attachments", next);
                                 }}
                                 style={{
-                                  padding: "2px 6px", borderRadius: 4, fontSize: 14, fontWeight: 700,
+                                  padding: "2px 6px", borderRadius: 4, fontSize: 13, fontWeight: 700,
                                   background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.15)",
                                   color: "#b04040", cursor: "pointer", flexShrink: 0,
                                 }}
@@ -1732,7 +2002,7 @@ export default function ATDevelopmentTracker() {
                       <input
                         id="att-url"
                         placeholder="Paste URL (YouTube, Google Doc, any link)"
-                        style={{ ...inp, flex: "2 1 200px", fontSize: 15 }}
+                        style={{ ...inp, flex: "2 1 200px", fontSize: 14 }}
                         onKeyDown={(ev) => {
                           if (ev.key === "Enter") {
                             ev.preventDefault();
@@ -1750,7 +2020,7 @@ export default function ATDevelopmentTracker() {
                       <input
                         id="att-label"
                         placeholder="Label (optional)"
-                        style={{ ...inp, flex: "1 1 120px", fontSize: 15 }}
+                        style={{ ...inp, flex: "1 1 120px", fontSize: 14 }}
                         onKeyDown={(ev) => {
                           if (ev.key === "Enter") {
                             ev.preventDefault();
@@ -1777,13 +2047,13 @@ export default function ATDevelopmentTracker() {
                           lblEl.value = "";
                         }}
                         style={{
-                          padding: "8px 14px", borderRadius: 6, fontSize: 15, fontWeight: 700,
+                          padding: "8px 14px", borderRadius: 6, fontSize: 14, fontWeight: 700,
                           background: "rgba(48,136,204,0.12)", border: "1px solid rgba(48,136,204,0.3)",
                           color: "#3088cc", cursor: "pointer", flexShrink: 0,
                         }}
                       >+ Add</button>
                     </div>
-                    <div style={{ fontSize: 14, color: "#4d6888", marginTop: 6 }}>
+                    <div style={{ fontSize: 13, color: "#4d6888", marginTop: 6 }}>
                       YouTube videos, Google Docs, Drive files, or any URL. Press Enter or click Add.
                     </div>
                   </div>
@@ -1792,7 +2062,7 @@ export default function ATDevelopmentTracker() {
                 <button onClick={saveEntry} style={{
                   width: "100%", padding: "11px", borderRadius: 7, border: "none",
                   background: "linear-gradient(135deg, #e07830, #c06020)", color: "#fff",
-                  fontSize: 17, fontWeight: 700, cursor: "pointer",
+                  fontSize: 16, fontWeight: 700, cursor: "pointer",
                 }}>Save Entry</button>
               </Card>
             </div>
@@ -1820,7 +2090,7 @@ export default function ATDevelopmentTracker() {
           return (
             <>
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 16, color: "#5a7898", lineHeight: 1.55, marginBottom: 12 }}>
+                <div style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.55, marginBottom: 12 }}>
                   Suggested activities from the AT Program Guide. These are not requirements — mentors may draw on these when designing Learning Objectives, or design entirely their own. Track your progress here.
                 </div>
 
@@ -1831,20 +2101,20 @@ export default function ATDevelopmentTracker() {
                   flexWrap: "wrap",
                 }}>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Complete</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#28a858" }}>{totalComplete}<span style={{ fontSize: 15, color: "#5a7898", fontWeight: 500 }}>/{ALL_LEs.length}</span></div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Complete</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#28a858" }}>{totalComplete}<span style={{ fontSize: 14, color: "#7a9ab5", fontWeight: 500 }}>/{ALL_LEs.length}</span></div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>In Progress</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#e07830" }}>{totalInProgress}</div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>In Progress</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#e07830" }}>{totalInProgress}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Assigned</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#3088cc" }}>{totalAssigned}</div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Assigned</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#3088cc" }}>{totalAssigned}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Not Started</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#5a7898" }}>{ALL_LEs.length - totalComplete - totalInProgress - totalAssigned}</div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Not Started</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#7a9ab5" }}>{ALL_LEs.length - totalComplete - totalInProgress - totalAssigned}</div>
                   </div>
                 </div>
               </div>
@@ -1857,8 +2127,8 @@ export default function ATDevelopmentTracker() {
                       display: "flex", justifyContent: "space-between", alignItems: "baseline",
                       marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${mod.color}30`,
                     }}>
-                      <span style={{ fontSize: 17, fontWeight: 700, color: mod.color }}>{modName}</span>
-                      <span style={{ fontSize: 14, color: "#5a7898" }}>{modComplete}/{mod.items.length} complete</span>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: mod.color }}>{modName}</span>
+                      <span style={{ fontSize: 13, color: "#7a9ab5" }}>{modComplete}/{mod.items.length} complete</span>
                     </div>
 
                     {/* Progress bar */}
@@ -1882,17 +2152,17 @@ export default function ATDevelopmentTracker() {
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                             <div style={{ flex: 1 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 14, fontWeight: 700, color: mod.color }}>{le.id}</span>
-                                <span style={{ fontSize: 16, fontWeight: 600, color: status === "Complete" ? "#6a8098" : "#c0ccd8", textDecoration: status === "Complete" ? "line-through" : "none" }}>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: mod.color }}>{le.id}</span>
+                                <span style={{ fontSize: 15, fontWeight: 600, color: status === "Complete" ? "#6a8098" : "#c0ccd8", textDecoration: status === "Complete" ? "line-through" : "none" }}>
                                   {le.title}
                                 </span>
                                 {s.assignedBy && (
-                                  <span style={{ fontSize: 13, color: (USERS[s.assignedBy] || {}).color || "#6a8098" }}>
+                                  <span style={{ fontSize: 12, color: (USERS[s.assignedBy] || {}).color || "#6a8098" }}>
                                     assigned by {(USERS[s.assignedBy] || {}).name || s.assignedBy}
                                   </span>
                                 )}
                               </div>
-                              <div style={{ fontSize: 14, color: "#6a8098", lineHeight: 1.5 }}>
+                              <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.5 }}>
                                 {le.desc}
                               </div>
                             </div>
@@ -1905,13 +2175,13 @@ export default function ATDevelopmentTracker() {
                                     updateLE(le.id, "assignedBy", currentUser?.key);
                                   }}
                                   style={{
-                                    padding: "5px 10px", fontSize: 13, fontWeight: 700, borderRadius: 5,
+                                    padding: "5px 10px", fontSize: 12, fontWeight: 700, borderRadius: 5,
                                     background: "rgba(48,136,204,0.12)", border: "1px solid rgba(48,136,204,0.3)",
                                     color: "#3088cc", cursor: "pointer",
                                   }}
                                 >Assign</button>
                               )}
-                              {(isCandidate || status !== "Not Started") && (
+                              {(isMentor ? status !== "Not Started" : (status === "Assigned" || status === "In Progress" || status === "Ready for Review")) && (
                                 <select
                                   value={status}
                                   onChange={ev => {
@@ -1922,7 +2192,7 @@ export default function ATDevelopmentTracker() {
                                     }
                                   }}
                                   style={{
-                                    padding: "5px 6px", fontSize: 13, fontWeight: 700, borderRadius: 5,
+                                    padding: "5px 6px", fontSize: 12, fontWeight: 700, borderRadius: 5,
                                     background: `${statusColor}15`, border: `1px solid ${statusColor}35`,
                                     color: statusColor, outline: "none", fontFamily: "inherit",
                                     appearance: "auto", cursor: "pointer",
@@ -1930,8 +2200,6 @@ export default function ATDevelopmentTracker() {
                                 >
                                   {isCandidate ? (
                                     <>
-                                      <option value="Not Started">Not Started</option>
-                                      <option value="Assigned">Assigned</option>
                                       <option value="In Progress">In Progress</option>
                                       <option value="Ready for Review">Ready for Review</option>
                                     </>
@@ -1958,28 +2226,76 @@ export default function ATDevelopmentTracker() {
                                 onChange={ev => updateLE(le.id, "date", ev.target.value)}
                                 placeholder="Date"
                                 style={{
-                                  padding: "4px 8px", fontSize: 13, color: "#a0b0c0",
+                                  padding: "4px 8px", fontSize: 12, color: "#d0d8e0",
                                   background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                                   borderRadius: 5, outline: "none", fontFamily: "inherit",
                                 }}
                               />
                               <input
                                 value={s.notes || ""}
-                                onChange={ev => updateLE(le.id, "notes", ev.target.value)}
+                                onChange={ev => {
+                                  updateLE(le.id, "notes", ev.target.value);
+                                  updateLE(le.id, "notesEditedBy", currentUser?.key);
+                                }}
                                 placeholder="Notes — what you did, who was involved, what you learned"
                                 style={{
-                                  flex: 1, minWidth: 180, padding: "4px 8px", fontSize: 13, color: "#a0b0c0",
+                                  flex: 1, minWidth: 180, padding: "4px 8px", fontSize: 12, color: "#d0d8e0",
                                   background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                                   borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
                                 }}
                               />
+                              {s.notesEditedBy && (
+                                <span style={{ fontSize: 10, color: "#4d6888" }}>
+                                  {(USERS[s.notesEditedBy] || {}).name || s.notesEditedBy}
+                                </span>
+                              )}
                               {s.linkedLO && (
-                                <span style={{ fontSize: 12, color: "#e07830", padding: "4px 8px", borderRadius: 4, background: "rgba(224,120,48,0.08)", border: "1px solid rgba(224,120,48,0.15)" }}>
+                                <span style={{ fontSize: 11, color: "#e07830", padding: "4px 8px", borderRadius: 4, background: "rgba(224,120,48,0.08)", border: "1px solid rgba(224,120,48,0.15)" }}>
                                   → {s.linkedLO}
                                 </span>
                               )}
                             </div>
                           )}
+
+                          {/* Evidence chain — linked LOs and diary entries */}
+                          {status !== "Not Started" && (() => {
+                            const linkedLOs = los.filter(l => l.linkedLE === le.id);
+                            const linkedDiary = entries.filter(e => (e.activeLEIds || []).includes(le.id));
+                            if (linkedLOs.length === 0 && linkedDiary.length === 0) return null;
+                            return (
+                              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)" }}>
+                                <div style={{ fontSize: 10, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Evidence</div>
+                                {linkedLOs.map(lo => {
+                                  const sc = lo.score;
+                                  return (
+                                    <div key={lo.id} onClick={(ev) => { ev.stopPropagation(); setViewingLO(lo); setTab("los"); }} style={{
+                                      display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", marginBottom: 3,
+                                      borderRadius: 4, cursor: "pointer",
+                                      background: LO_STATUS_COLORS[lo.status]?.bg || "rgba(255,255,255,0.02)",
+                                      border: `1px solid ${LO_STATUS_COLORS[lo.status]?.border || "rgba(255,255,255,0.05)"}`,
+                                    }}>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: LO_STATUS_COLORS[lo.status]?.text || "#7a9ab5" }}>{lo.objId}</span>
+                                      <span style={{ fontSize: 11, color: "#7a9ab5", flex: 1 }}>{lo.objective ? (lo.objective.length > 40 ? lo.objective.slice(0, 40) + "…" : lo.objective) : "—"}</span>
+                                      <span style={{ fontSize: 10, fontWeight: 600, color: "#4d6888" }}>{lo.status}</span>
+                                      {sc > 0 && (
+                                        <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 5px", borderRadius: 3,
+                                          background: sc >= 4 ? "rgba(40,168,88,0.12)" : "rgba(224,120,48,0.1)",
+                                          color: sc >= 4 ? "#28a858" : "#e07830" }}>{sc}</span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                {linkedDiary.length > 0 && (
+                                  <div style={{ fontSize: 11, color: "#7a9ab5", display: "flex", alignItems: "center", gap: 4, marginTop: linkedLOs.length > 0 ? 4 : 0 }}>
+                                    📓 {linkedDiary.length} diary {linkedDiary.length === 1 ? "entry" : "entries"}
+                                    <span style={{ color: "#4d6888" }}>
+                                      ({linkedDiary.slice(0, 3).map(e => new Date(e.date).toLocaleDateString("en", { month: "short", day: "numeric" })).join(", ")}{linkedDiary.length > 3 ? ` +${linkedDiary.length - 3} more` : ""})
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -2053,7 +2369,7 @@ export default function ATDevelopmentTracker() {
           return (
             <>
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 16, color: "#5a7898", lineHeight: 1.55, marginBottom: 12 }}>
+                <div style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.55, marginBottom: 12 }}>
                   Track your skiing development over time with video. For each task, record your personal cues, upload YouTube videos across the season, and get mentor feedback on each one.
                 </div>
                 <div style={{
@@ -2061,12 +2377,12 @@ export default function ATDevelopmentTracker() {
                   background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 8,
                 }}>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Tasks with Video</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#3088cc" }}>{totalWithVideos}<span style={{ fontSize: 15, color: "#5a7898", fontWeight: 500 }}>/{skiGates.length}</span></div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Tasks with Video</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#3088cc" }}>{totalWithVideos}<span style={{ fontSize: 14, color: "#7a9ab5", fontWeight: 500 }}>/{skiGates.length}</span></div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Videos</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#e07830" }}>{skiGates.reduce((sum, g) => sum + (videoData[g.id]?.videos || []).length, 0)}</div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Videos</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#e07830" }}>{skiGates.reduce((sum, g) => sum + (videoData[g.id]?.videos || []).length, 0)}</div>
                   </div>
                 </div>
               </div>
@@ -2084,7 +2400,7 @@ export default function ATDevelopmentTracker() {
                         padding: "8px 10px 4px", marginTop: gi > 0 ? 14 : 0,
                         borderBottom: "2px solid rgba(48,136,204,0.25)", marginBottom: 6,
                       }}>
-                        <span style={{ fontSize: 14, fontWeight: 800, color: "#3088cc", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: "#3088cc", textTransform: "uppercase", letterSpacing: "0.08em" }}>
                           {gate.category}
                         </span>
                       </div>
@@ -2098,16 +2414,16 @@ export default function ATDevelopmentTracker() {
                       {/* Gate header */}
                       <div style={{ padding: "12px 14px", borderBottom: videos.length > 0 || data.cues ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                          <span style={{ fontSize: 14, fontWeight: 700, color: "#3088cc" }}>{gate.id}</span>
-                          <span style={{ fontSize: 16, fontWeight: 600, color: "#c0ccd8" }}>{gate.criterion}</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#3088cc" }}>{gate.id}</span>
+                          <span style={{ fontSize: 15, fontWeight: 600, color: "#c0ccd8" }}>{gate.criterion}</span>
                           {videos.length > 0 && (
-                            <span style={{ fontSize: 13, color: "#5a7898", marginLeft: "auto" }}>🎬 {videos.length} video{videos.length !== 1 ? "s" : ""}</span>
+                            <span style={{ fontSize: 12, color: "#7a9ab5", marginLeft: "auto" }}>🎬 {videos.length} video{videos.length !== 1 ? "s" : ""}</span>
                           )}
                         </div>
 
                         {/* Personal cues */}
                         <div style={{ marginBottom: 8 }}>
-                          <label style={{ fontSize: 12, color: "#607898", fontWeight: 700, display: "block", marginBottom: 3 }}>
+                          <label style={{ fontSize: 11, color: "#607898", fontWeight: 700, display: "block", marginBottom: 3 }}>
                             My Cues & Focus Points
                           </label>
                           <textarea
@@ -2115,7 +2431,7 @@ export default function ATDevelopmentTracker() {
                             onChange={ev => updateCues(gate.id, ev.target.value)}
                             placeholder="What do I focus on? Key feelings, timing cues, body positions..."
                             style={{
-                              width: "100%", minHeight: 36, padding: "6px 10px", fontSize: 14, color: "#a0b0c0",
+                              width: "100%", minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#d0d8e0",
                               background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
                               borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
                               lineHeight: 1.5, boxSizing: "border-box",
@@ -2130,7 +2446,7 @@ export default function ATDevelopmentTracker() {
                             type="date"
                             defaultValue={today()}
                             style={{
-                              padding: "6px 8px", fontSize: 14, color: "#e0e8f0",
+                              padding: "6px 8px", fontSize: 13, color: "#e0e8f0",
                               background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                               borderRadius: 5, outline: "none", fontFamily: "inherit",
                             }}
@@ -2139,7 +2455,7 @@ export default function ATDevelopmentTracker() {
                             id={`vid-url-${gate.id}`}
                             placeholder="YouTube URL"
                             style={{
-                              flex: "2 1 160px", padding: "6px 10px", fontSize: 14, color: "#e0e8f0",
+                              flex: "2 1 160px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
                               background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                               borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
                             }}
@@ -2149,14 +2465,14 @@ export default function ATDevelopmentTracker() {
                             id={`vid-note-${gate.id}`}
                             placeholder="What was your focus?"
                             style={{
-                              flex: "1 1 140px", padding: "6px 10px", fontSize: 14, color: "#e0e8f0",
+                              flex: "1 1 140px", padding: "6px 10px", fontSize: 13, color: "#e0e8f0",
                               background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                               borderRadius: 5, outline: "none", fontFamily: "inherit", boxSizing: "border-box",
                             }}
                             onKeyDown={ev => { if (ev.key === "Enter") addVideo(gate.id); }}
                           />
                           <button onClick={() => addVideo(gate.id)} style={{
-                            padding: "6px 12px", borderRadius: 5, fontSize: 14, fontWeight: 700,
+                            padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
                             background: "rgba(48,136,204,0.12)", border: "1px solid rgba(48,136,204,0.3)",
                             color: "#3088cc", cursor: "pointer", flexShrink: 0,
                           }}>+ Add</button>
@@ -2186,7 +2502,7 @@ export default function ATDevelopmentTracker() {
                                       position: "absolute", width: 24, height: 17, borderRadius: 4,
                                       background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center",
                                     }}>
-                                      <span style={{ fontSize: 10, color: "#fff" }}>▶</span>
+                                      <span style={{ fontSize: 9, color: "#fff" }}>▶</span>
                                     </div>
                                   </a>
                                 ) : (
@@ -2194,13 +2510,13 @@ export default function ATDevelopmentTracker() {
                                     width: 96, height: 54, borderRadius: 5, flexShrink: 0,
                                     background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                    fontSize: 23, textDecoration: "none",
+                                    fontSize: 22, textDecoration: "none",
                                   }}>🎬</a>
                                 )}
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                                    <span style={{ fontSize: 15, fontWeight: 700, color: "#c0ccd8" }}>{vid.date}</span>
-                                    <span style={{ fontSize: 14, color: addedByUser.color, fontWeight: 600 }}>by {addedByUser.name}</span>
+                                    <span style={{ fontSize: 14, fontWeight: 700, color: "#c0ccd8" }}>{vid.date}</span>
+                                    <span style={{ fontSize: 13, color: addedByUser.color, fontWeight: 600 }}>by {addedByUser.name}</span>
                                     {/* 💬 expand button */}
                                     <button
                                       onClick={() => {
@@ -2212,19 +2528,19 @@ export default function ATDevelopmentTracker() {
                                         background: (vid.comments || []).length > 0 ? "rgba(40,168,88,0.1)" : "rgba(255,255,255,0.02)",
                                         border: `1px solid ${(vid.comments || []).length > 0 ? "rgba(40,168,88,0.25)" : "rgba(255,255,255,0.06)"}`,
                                         color: (vid.comments || []).length > 0 ? "#28a858" : "#4d6888",
-                                        fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 2,
+                                        fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 2,
                                       }}
                                     >
                                       💬 {(vid.comments || []).length > 0 ? (vid.comments || []).length : ""}
                                     </button>
                                     <button onClick={() => { if (confirm("Remove this video?")) removeVideo(gate.id, vi); }} style={{
-                                      marginLeft: "auto", padding: "1px 5px", borderRadius: 3, fontSize: 12,
+                                      marginLeft: "auto", padding: "1px 5px", borderRadius: 3, fontSize: 11,
                                       background: "rgba(200,50,50,0.06)", border: "1px solid rgba(200,50,50,0.12)",
                                       color: "#b04040", cursor: "pointer",
                                     }}>✕</button>
                                   </div>
                                   {vid.notes && (
-                                    <div style={{ fontSize: 14, color: "#6a8098", lineHeight: 1.4, marginBottom: 4 }}>{vid.notes}</div>
+                                    <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 4 }}>{vid.notes}</div>
                                   )}
 
                                   {/* Expandable comment thread — same pattern as baseline */}
@@ -2235,7 +2551,7 @@ export default function ATDevelopmentTracker() {
                                       borderRadius: 8,
                                     }}>
                                       {(vid.comments || []).length === 0 && (
-                                        <div style={{ fontSize: 14, color: "#4d6888", marginBottom: 8, fontStyle: "italic" }}>
+                                        <div style={{ fontSize: 13, color: "#4d6888", marginBottom: 8, fontStyle: "italic" }}>
                                           No comments yet — mentors can leave feedback on this video.
                                         </div>
                                       )}
@@ -2251,17 +2567,17 @@ export default function ATDevelopmentTracker() {
                                               width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
                                               background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
                                               display: "flex", alignItems: "center", justifyContent: "center",
-                                              fontSize: 12, fontWeight: 800, color: commenter.color,
+                                              fontSize: 11, fontWeight: 800, color: commenter.color,
                                             }}>{commenter.name[0]}</div>
                                             <div style={{ flex: 1 }}>
                                               <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
-                                                <span style={{ fontSize: 14, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
-                                                <span style={{ fontSize: 12, color: "#4d6888" }}>
+                                                <span style={{ fontSize: 13, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                                                <span style={{ fontSize: 11, color: "#4d6888" }}>
                                                   {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
                                                   {c.timestamp ? " · " + new Date(c.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                                                 </span>
                                               </div>
-                                              <div style={{ fontSize: 15, color: "#b0bcc8", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
+                                              <div style={{ fontSize: 14, color: "#b0bcc8", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
                                             </div>
                                           </div>
                                         );
@@ -2272,13 +2588,13 @@ export default function ATDevelopmentTracker() {
                                           background: `${currentUser?.color || "#7a9ab5"}20`,
                                           border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
                                           display: "flex", alignItems: "center", justifyContent: "center",
-                                          fontSize: 12, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
+                                          fontSize: 11, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
                                         }}>{currentUser?.name?.[0] || "?"}</div>
                                         <textarea
                                           id={`vid-comment-${gate.id}-${vi}`}
                                           placeholder="Leave feedback on this video..."
                                           style={{
-                                            flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 14, color: "#c0ccd8",
+                                            flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#c0ccd8",
                                             background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
                                             borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
                                             lineHeight: 1.5, boxSizing: "border-box",
@@ -2296,13 +2612,13 @@ export default function ATDevelopmentTracker() {
                                           addVideoComment(gate.id, vi, el.value);
                                           el.value = "";
                                         }} style={{
-                                          padding: "6px 12px", borderRadius: 5, fontSize: 14, fontWeight: 700,
+                                          padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
                                           background: `${currentUser?.color || "#3088cc"}12`,
                                           border: `1px solid ${currentUser?.color || "#3088cc"}30`,
                                           color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
                                         }}>Post</button>
                                       </div>
-                                      <div style={{ fontSize: 12, color: "#3a5068", marginTop: 3 }}>Ctrl+Enter to post</div>
+                                      <div style={{ fontSize: 11, color: "#3a5068", marginTop: 3 }}>Ctrl+Enter to post</div>
                                     </div>
                                   )}
                                 </div>
@@ -2369,22 +2685,22 @@ export default function ATDevelopmentTracker() {
                     }}>
                       <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       <div style={{ position: "absolute", width: 28, height: 20, borderRadius: 4, background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: 11, color: "#fff" }}>▶</span>
+                        <span style={{ fontSize: 10, color: "#fff" }}>▶</span>
                       </div>
                     </a>
                   ) : (
-                    <div style={{ width: 120, height: 68, borderRadius: 5, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 25, flexShrink: 0 }}>🎬</div>
+                    <div style={{ width: 120, height: 68, borderRadius: 5, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>🎬</div>
                   )}
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: "#c0ccd8" }}>{vid.date}</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: gateColor, padding: "1px 6px", borderRadius: 3, background: `${gateColor}12`, border: `1px solid ${gateColor}20` }}>{vid.gateId}</span>
-                      <span style={{ fontSize: 14, color: "#6a8098" }}>{vid.criterion}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "#c0ccd8" }}>{vid.date}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: gateColor, padding: "1px 6px", borderRadius: 3, background: `${gateColor}12`, border: `1px solid ${gateColor}20` }}>{vid.gateId}</span>
+                      <span style={{ fontSize: 13, color: "#6a8098" }}>{vid.criterion}</span>
                     </div>
-                    {vid.notes && <div style={{ fontSize: 14, color: "#6a8098", lineHeight: 1.4, marginBottom: 3 }}>{vid.notes}</div>}
-                    <div style={{ fontSize: 13, color: addedByUser.color }}>by {addedByUser.name}</div>
+                    {vid.notes && <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 3 }}>{vid.notes}</div>}
+                    <div style={{ fontSize: 12, color: addedByUser.color }}>by {addedByUser.name}</div>
                     {(vid.comments || []).length > 0 && (
-                      <div style={{ fontSize: 13, color: "#28a858", marginTop: 3 }}>💬 {vid.comments.length} comment{vid.comments.length !== 1 ? "s" : ""}</div>
+                      <div style={{ fontSize: 12, color: "#28a858", marginTop: 3 }}>💬 {vid.comments.length} comment{vid.comments.length !== 1 ? "s" : ""}</div>
                     )}
                   </div>
                 </div>
@@ -2395,7 +2711,7 @@ export default function ATDevelopmentTracker() {
           return (
             <>
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 16, color: "#5a7898", lineHeight: 1.55, marginBottom: 12 }}>
+                <div style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.55, marginBottom: 12 }}>
                   All skiing videos across all tasks, sorted by date. Use comparison mode to view two videos side by side.
                 </div>
 
@@ -2406,9 +2722,9 @@ export default function ATDevelopmentTracker() {
                     value={catFilter}
                     onChange={ev => setCatFilter(ev.target.value)}
                     style={{
-                      padding: "6px 10px", fontSize: 14, fontWeight: 600, borderRadius: 6,
+                      padding: "6px 10px", fontSize: 13, fontWeight: 600, borderRadius: 6,
                       background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
-                      color: "#a0b0c0", outline: "none", fontFamily: "inherit", appearance: "auto", cursor: "pointer",
+                      color: "#d0d8e0", outline: "none", fontFamily: "inherit", appearance: "auto", cursor: "pointer",
                     }}
                   >
                     <option value="all">All Categories</option>
@@ -2419,7 +2735,7 @@ export default function ATDevelopmentTracker() {
                   <button
                     onClick={() => { setCompareMode(!compareMode); setCompareA(null); setCompareB(null); }}
                     style={{
-                      padding: "6px 14px", borderRadius: 6, fontSize: 14, fontWeight: 700, cursor: "pointer",
+                      padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: "pointer",
                       background: compareMode ? "rgba(48,136,204,0.15)" : "rgba(255,255,255,0.03)",
                       border: `1.5px solid ${compareMode ? "rgba(48,136,204,0.4)" : "rgba(255,255,255,0.08)"}`,
                       color: compareMode ? "#5ab0e0" : "#6a8098",
@@ -2428,7 +2744,7 @@ export default function ATDevelopmentTracker() {
                     {compareMode ? "✕ Exit Compare" : "⇆ Compare Two Videos"}
                   </button>
 
-                  <span style={{ fontSize: 14, color: "#5a7898", marginLeft: "auto" }}>{filtered.length} video{filtered.length !== 1 ? "s" : ""}</span>
+                  <span style={{ fontSize: 13, color: "#7a9ab5", marginLeft: "auto" }}>{filtered.length} video{filtered.length !== 1 ? "s" : ""}</span>
                 </div>
               </div>
 
@@ -2437,7 +2753,7 @@ export default function ATDevelopmentTracker() {
                 <div style={{
                   padding: "10px 14px", marginBottom: 14, borderRadius: 8,
                   background: "rgba(48,136,204,0.06)", border: "1px solid rgba(48,136,204,0.15)",
-                  fontSize: 15, color: "#5ab0e0",
+                  fontSize: 14, color: "#5ab0e0",
                 }}>
                   {!compareA ? "Select the first video to compare" : "Now select the second video"}
                 </div>
@@ -2455,8 +2771,8 @@ export default function ATDevelopmentTracker() {
                     const gateData = videoData[vid.gateId] || {};
                     return (
                       <div key={si}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#3088cc", marginBottom: 4 }}>{vid.gateId} — {vid.criterion}</div>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: "#c0ccd8", marginBottom: 6 }}>{vid.date}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#3088cc", marginBottom: 4 }}>{vid.gateId} — {vid.criterion}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#c0ccd8", marginBottom: 6 }}>{vid.date}</div>
                         {ytId && (
                           <a href={vid.url} target="_blank" rel="noopener noreferrer" style={{
                             display: "block", width: "100%", aspectRatio: "16/9", borderRadius: 6, overflow: "hidden",
@@ -2464,13 +2780,13 @@ export default function ATDevelopmentTracker() {
                           }}>
                             <img src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                             <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 36, height: 25, borderRadius: 5, background: "rgba(255,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                              <span style={{ fontSize: 13, color: "#fff" }}>▶</span>
+                              <span style={{ fontSize: 12, color: "#fff" }}>▶</span>
                             </div>
                           </a>
                         )}
-                        {vid.notes && <div style={{ fontSize: 14, color: "#6a8098", lineHeight: 1.4, marginBottom: 6 }}>{vid.notes}</div>}
+                        {vid.notes && <div style={{ fontSize: 13, color: "#6a8098", lineHeight: 1.4, marginBottom: 6 }}>{vid.notes}</div>}
                         {gateData.cues && (
-                          <div style={{ fontSize: 13, color: "#607898", padding: "6px 8px", borderRadius: 5, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", marginBottom: 6 }}>
+                          <div style={{ fontSize: 12, color: "#607898", padding: "6px 8px", borderRadius: 5, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", marginBottom: 6 }}>
                             <span style={{ fontWeight: 700, color: "#6a8098" }}>Cues: </span>{gateData.cues}
                           </div>
                         )}
@@ -2478,8 +2794,8 @@ export default function ATDevelopmentTracker() {
                           const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
                           return (
                             <div key={ci} style={{ display: "flex", gap: 5, alignItems: "flex-start", marginBottom: 4 }}>
-                              <span style={{ width: 16, height: 16, borderRadius: "50%", background: `${commenter.color}20`, border: `1px solid ${commenter.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, color: commenter.color, flexShrink: 0 }}>{commenter.name[0]}</span>
-                              <div style={{ fontSize: 13, color: "#a0b0c0", lineHeight: 1.4 }}>
+                              <span style={{ width: 16, height: 16, borderRadius: "50%", background: `${commenter.color}20`, border: `1px solid ${commenter.color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: commenter.color, flexShrink: 0 }}>{commenter.name[0]}</span>
+                              <div style={{ fontSize: 12, color: "#d0d8e0", lineHeight: 1.4 }}>
                                 <strong style={{ color: commenter.color }}>{commenter.name}</strong> {c.text}
                               </div>
                             </div>
@@ -2494,9 +2810,9 @@ export default function ATDevelopmentTracker() {
               {/* Video list */}
               {filtered.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "50px 20px", color: "#3a5068" }}>
-                  <div style={{ fontSize: 36, marginBottom: 8, opacity: 0.4 }}>🎬</div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: "#5a7898" }}>No videos yet</div>
-                  <div style={{ fontSize: 16, color: "#3a5068", marginTop: 4 }}>Add videos in the Video Progress tab to see them here.</div>
+                  <div style={{ fontSize: 35, marginBottom: 8, opacity: 0.4 }}>🎬</div>
+                  <div style={{ fontSize: 17, fontWeight: 600, color: "#7a9ab5" }}>No videos yet</div>
+                  <div style={{ fontSize: 15, color: "#4d6888", marginTop: 4 }}>Add videos in the Video Progress tab to see them here.</div>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2523,6 +2839,373 @@ export default function ATDevelopmentTracker() {
           );
         })()}
 
+        {/* ═══ TAB: SCORE HISTORY ═══ */}
+        {tab === "scores" && !isSubView && (() => {
+          // Group history by gate
+          const byGate = {};
+          scoreHistory.forEach(h => {
+            if (!byGate[h.gateId]) byGate[h.gateId] = [];
+            byGate[h.gateId].push(h);
+          });
+
+          // Sort each gate's history chronologically
+          Object.keys(byGate).forEach(k => {
+            byGate[k].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+          });
+
+          // Also build a flat chronological list for the timeline view
+          const allChanges = [...scoreHistory].sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+
+          // Gates that have any history
+          const gatesWithHistory = ALL_GATES.filter(gId => byGate[gId] && byGate[gId].length > 0);
+
+          // Compute improvement stats
+          const improvements = {};
+          gatesWithHistory.forEach(gId => {
+            const hist = byGate[gId];
+            const first = hist[0];
+            const last = hist[hist.length - 1];
+            improvements[gId] = { first: first.score, last: last.score, delta: last.score - first.score, changes: hist.length };
+          });
+
+          const [scoreViewMode, setScoreViewMode] = [
+            gateFilter === "timeline" ? "timeline" : "bygate",
+            (mode) => setGateFilter(mode === "bygate" ? null : "timeline")
+          ];
+
+          return (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 16, color: "#7a9ab5", lineHeight: 1.55, marginBottom: 12 }}>
+                  Track how your scores change over time. Every baseline and gate score change is recorded with date and who scored it.
+                </div>
+
+                {/* Summary stats */}
+                <div style={{
+                  display: "flex", gap: 16, padding: "12px 14px", marginBottom: 14,
+                  background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 8,
+                  flexWrap: "wrap",
+                }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Gates Scored</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: "#3088cc" }}>{gatesWithHistory.length}<span style={{ fontSize: 14, color: "#7a9ab5", fontWeight: 500 }}>/{ALL_GATES.length}</span></div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Changes</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: "#e07830" }}>{scoreHistory.length}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Improved</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: "#28a858" }}>{Object.values(improvements).filter(i => i.delta > 0).length}</div>
+                  </div>
+                </div>
+
+                {/* View toggle */}
+                <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+                  {[
+                    { id: "bygate", label: "By Gate" },
+                    { id: "timeline", label: "Timeline" },
+                  ].map(v => (
+                    <button
+                      key={v.id}
+                      onClick={() => setScoreViewMode(v.id)}
+                      style={{
+                        padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                        border: scoreViewMode === v.id ? "1.5px solid rgba(224,120,48,0.45)" : "1.5px solid rgba(255,255,255,0.06)",
+                        background: scoreViewMode === v.id ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.015)",
+                        color: scoreViewMode === v.id ? "#e8a050" : "#7a9ab5",
+                      }}
+                    >{v.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {scoreHistory.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "50px 20px", color: "#3a5068" }}>
+                  <div style={{ fontSize: 37, marginBottom: 8, opacity: 0.4 }}>📊</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: "#7a9ab5" }}>No score changes recorded yet</div>
+                  <div style={{ fontSize: 16, color: "#4d6888", marginTop: 4 }}>Score changes will appear here as you and your mentors score the Baseline and Gate Readiness tabs.</div>
+                </div>
+              ) : scoreViewMode === "timeline" ? (
+                /* ── Timeline view: all changes chronologically ── */
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {allChanges.map((h, hi) => {
+                    const gate = GATE_LOOKUP[h.gateId];
+                    const scorer = USERS[h.who] || { name: h.who, color: "#7a9ab5" };
+                    const changer = USERS[h.changedBy] || scorer;
+                    const date = h.timestamp ? new Date(h.timestamp) : null;
+                    // Find previous score for this gate+who
+                    const prevEntries = scoreHistory.filter(s => s.gateId === h.gateId && s.who === h.who && s.timestamp < h.timestamp);
+                    const prevScore = prevEntries.length > 0 ? prevEntries[prevEntries.length - 1].score : null;
+                    const delta = prevScore !== null ? h.score - prevScore : null;
+                    return (
+                      <div key={hi} style={{
+                        display: "flex", gap: 10, alignItems: "center", padding: "8px 12px",
+                        borderRadius: 6, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)",
+                      }}>
+                        <div style={{
+                          width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                          background: `${changer.color}20`, border: `1.5px solid ${changer.color}40`,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 11, fontWeight: 800, color: changer.color,
+                        }}>{changer.name[0]}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: gate ? gate.color : "#7a9ab5" }}>{h.gateId}</span>
+                            <span style={{ fontSize: 13, color: "#d0d8e0" }}>{gate ? gate.criterion : ""}</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#7a9ab5", marginTop: 2 }}>
+                            {scorer.name}'s {h.type} score → <strong style={{ color: h.score >= 4 ? "#28a858" : "#e07830", fontSize: 14 }}>{h.score}</strong>
+                            {delta !== null && (
+                              <span style={{ color: delta > 0 ? "#28a858" : delta < 0 ? "#e05028" : "#7a9ab5", marginLeft: 6, fontWeight: 700 }}>
+                                {delta > 0 ? `▲ +${delta}` : delta < 0 ? `▼ ${delta}` : "—"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#4d6888", textAlign: "right", flexShrink: 0 }}>
+                          {date ? date.toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                          <br />
+                          {date ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* ── By Gate view: grouped by gate with history ── */
+                <div>
+                  {Object.entries(GATES).map(([modName, mod]) => {
+                    const modGatesWithHist = mod.gates.filter(g => byGate[g.id] && byGate[g.id].length > 0);
+                    if (modGatesWithHist.length === 0) return null;
+                    return (
+                      <div key={modName} style={{ marginBottom: 20 }}>
+                        <div style={{
+                          padding: "6px 8px 4px", marginBottom: 6,
+                          borderBottom: `2px solid ${mod.color}30`,
+                        }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: mod.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>{modName}</span>
+                        </div>
+                        {modGatesWithHist.map(gate => {
+                          const hist = byGate[gate.id];
+                          const imp = improvements[gate.id];
+                          return (
+                            <div key={gate.id} style={{
+                              padding: "10px 12px", marginBottom: 6, borderRadius: 8,
+                              background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
+                            }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: mod.color }}>{gate.id}</span>
+                                  <span style={{ fontSize: 14, color: "#d0d8e0" }}>{gate.criterion}</span>
+                                </div>
+                                {imp && imp.delta !== 0 && (
+                                  <span style={{
+                                    fontSize: 12, fontWeight: 700, padding: "2px 8px", borderRadius: 4,
+                                    background: imp.delta > 0 ? "rgba(40,168,88,0.1)" : "rgba(230,80,40,0.1)",
+                                    border: `1px solid ${imp.delta > 0 ? "rgba(40,168,88,0.25)" : "rgba(230,80,40,0.25)"}`,
+                                    color: imp.delta > 0 ? "#28a858" : "#e05028",
+                                  }}>
+                                    {imp.delta > 0 ? `▲ +${imp.delta}` : `▼ ${imp.delta}`} ({imp.first} → {imp.last})
+                                  </span>
+                                )}
+                              </div>
+                              {/* Score change timeline */}
+                              <div style={{ display: "flex", flexDirection: "column", gap: 3, paddingLeft: 4 }}>
+                                {hist.map((h, hi) => {
+                                  const scorer = USERS[h.who] || { name: h.who, color: "#7a9ab5" };
+                                  const date = h.timestamp ? new Date(h.timestamp) : null;
+                                  const prevScore = hi > 0 ? hist[hi - 1].score : null;
+                                  const delta = prevScore !== null && hist[hi - 1].who === h.who ? h.score - prevScore : null;
+                                  return (
+                                    <div key={hi} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                                      <div style={{
+                                        width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                                        background: h.score >= 4 ? "#28a858" : "#e07830",
+                                        border: `1.5px solid ${h.score >= 4 ? "#28a858" : "#e07830"}`,
+                                      }} />
+                                      <span style={{ fontSize: 12, color: "#4d6888", minWidth: 65 }}>
+                                        {date ? date.toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                                      </span>
+                                      <span style={{
+                                        width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+                                        background: `${scorer.color}20`, border: `1px solid ${scorer.color}40`,
+                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                        fontSize: 9, fontWeight: 800, color: scorer.color,
+                                      }}>{scorer.name[0]}</span>
+                                      <span style={{ fontSize: 13, color: scorer.color, fontWeight: 600 }}>{scorer.name}</span>
+                                      <span style={{ fontSize: 13, color: "#d0d8e0" }}>{h.type}</span>
+                                      <span style={{
+                                        fontSize: 14, fontWeight: 800,
+                                        color: h.score >= 4 ? "#28a858" : "#e07830",
+                                      }}>{h.score}</span>
+                                      {delta !== null && delta !== 0 && (
+                                        <span style={{ fontSize: 11, fontWeight: 700, color: delta > 0 ? "#28a858" : "#e05028" }}>
+                                          {delta > 0 ? `+${delta}` : delta}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
+
+        {/* ═══ TAB: CLINIC FEEDBACK ═══ */}
+        {tab === "feedback" && !isSubView && (() => {
+          const FB_QUESTIONS = [
+            { id: "communication", shortLabel: "Clear Communication", gateRef: "CL-G1, CL-G5" },
+            { id: "adapt", shortLabel: "Adapted to Group", gateRef: "CL-G3, CL-G7" },
+            { id: "feedback_quality", shortLabel: "Useful Feedback", gateRef: "CL-G8" },
+            { id: "safety", shortLabel: "Safety & Comfort", gateRef: "CL-G6, CL-G11" },
+            { id: "engagement", shortLabel: "Group Participation", gateRef: "CL-G5, CL-G11" },
+            { id: "learning", shortLabel: "I Learned Something", gateRef: "CL-G1, CL-G4, CL-G9" },
+          ];
+
+          // Group by session date
+          const sessions = {};
+          clinicFeedback.forEach(fb => {
+            const key = fb.sessionDate || fb.timestamp?.slice(0, 10) || "unknown";
+            if (!sessions[key]) sessions[key] = { topic: fb.sessionTopic || "", goal: fb.sessionGoal || "", responses: [] };
+            sessions[key].responses.push(fb);
+          });
+          const sessionKeys = Object.keys(sessions).sort().reverse();
+
+          const aggregate = (responses) => {
+            const agg = {};
+            FB_QUESTIONS.forEach(q => {
+              const vals = responses.map(r => r.scores?.[q.id]).filter(v => v > 0);
+              agg[q.id] = {
+                avg: vals.length > 0 ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : "—",
+                count: vals.length,
+                min: vals.length > 0 ? Math.min(...vals) : 0,
+                max: vals.length > 0 ? Math.max(...vals) : 0,
+              };
+            });
+            agg._goalMet = {
+              yes: responses.filter(r => r.goalMet === "yes").length,
+              partially: responses.filter(r => r.goalMet === "partially").length,
+              no: responses.filter(r => r.goalMet === "no").length,
+            };
+            return agg;
+          };
+
+          return (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.5 }}>
+                  Anonymous feedback from your clinic participants. Set up sessions and share the QR at <strong style={{ color: "#d0d8e0" }}>/feedback</strong>.
+                </div>
+                <button onClick={() => window.open("/feedback", "_blank")} style={{
+                  padding: "7px 14px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.4)",
+                  background: "rgba(224,120,48,0.1)", color: "#e8a050", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                  whiteSpace: "nowrap", flexShrink: 0, marginLeft: 10,
+                }}>Open Feedback Form</button>
+              </div>
+
+              {clinicFeedback.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "50px 20px", color: "#3a5068" }}>
+                  <div style={{ fontSize: 37, marginBottom: 8, opacity: 0.4 }}>📋</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: "#7a9ab5" }}>No feedback collected yet</div>
+                  <div style={{ fontSize: 15, color: "#3a5068", marginTop: 4 }}>Go to /feedback to set up a session, then share the QR code with your clinic participants.</div>
+                </div>
+              ) : (
+                sessionKeys.map(dateKey => {
+                  const sess = sessions[dateKey];
+                  const agg = aggregate(sess.responses);
+                  const overallAvg = FB_QUESTIONS.map(q => parseFloat(agg[q.id].avg)).filter(v => !isNaN(v));
+                  const totalAvg = overallAvg.length > 0 ? (overallAvg.reduce((a, b) => a + b, 0) / overallAvg.length).toFixed(1) : "—";
+
+                  return (
+                    <Card key={dateKey} style={{ marginBottom: 16 }}>
+                      {/* Session header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: "#d0d8e0" }}>{sess.topic || "Clinic Session"}</div>
+                          <div style={{ fontSize: 12, color: "#7a9ab5" }}>{dateKey} · {sess.responses.length} response{sess.responses.length !== 1 ? "s" : ""}</div>
+                        </div>
+                        <span style={{
+                          fontSize: 22, fontWeight: 800,
+                          color: parseFloat(totalAvg) >= 7 ? "#28a858" : parseFloat(totalAvg) >= 4 ? "#e07830" : "#e05028",
+                        }}>{totalAvg}<span style={{ fontSize: 13, color: "#7a9ab5" }}>/10</span></span>
+                      </div>
+
+                      {/* Goal met */}
+                      {sess.goal && (
+                        <div style={{ marginBottom: 12, padding: "8px 10px", borderRadius: 6, background: "rgba(48,136,204,0.04)", border: "1px solid rgba(48,136,204,0.1)" }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#3088cc", marginBottom: 4 }}>GOAL: {sess.goal}</div>
+                          <div style={{ display: "flex", gap: 12 }}>
+                            <span style={{ fontSize: 13, color: "#28a858", fontWeight: 700 }}>Yes: {agg._goalMet.yes}</span>
+                            <span style={{ fontSize: 13, color: "#e07830", fontWeight: 700 }}>Partially: {agg._goalMet.partially}</span>
+                            <span style={{ fontSize: 13, color: "#e05028", fontWeight: 700 }}>No: {agg._goalMet.no}</span>
+                          </div>
+                          {sess.responses.filter(r => r.goalComment).map((r, i) => (
+                            <div key={i} style={{ fontSize: 12, color: "#d0d8e0", marginTop: 4 }}>
+                              "{r.goalComment}" <span style={{ color: "#4d6888" }}>— {r.name || "Anonymous"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Question scores */}
+                      {FB_QUESTIONS.map(q => {
+                        const a = agg[q.id];
+                        const avg = parseFloat(a.avg);
+                        const barColor = avg >= 7 ? "#28a858" : avg >= 4 ? "#e07830" : "#e05028";
+                        const qComments = sess.responses.filter(r => r.comments?.[q.id]);
+                        return (
+                          <div key={q.id} style={{ marginBottom: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: "#d0d8e0" }}>{q.shortLabel}</span>
+                              <div>
+                                <span style={{ fontSize: 17, fontWeight: 800, color: barColor }}>{a.avg}</span>
+                                <span style={{ fontSize: 11, color: "#7a9ab5" }}>/10</span>
+                                {qComments.length > 0 && <span style={{ fontSize: 11, color: "#28a858", marginLeft: 6 }}>💬 {qComments.length}</span>}
+                              </div>
+                            </div>
+                            <div style={{ height: 5, background: "rgba(255,255,255,0.04)", borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${(avg / 10) * 100}%`, background: barColor, borderRadius: 3 }} />
+                            </div>
+                            <div style={{ fontSize: 10, color: "#4d6888", marginTop: 2 }}>
+                              Range: {a.min}–{a.max} · {a.count} rated · {q.gateRef}
+                            </div>
+                            {qComments.map((r, i) => (
+                              <div key={i} style={{ fontSize: 12, color: "#d0d8e0", marginTop: 3, paddingLeft: 8 }}>
+                                "{r.comments[q.id]}" <span style={{ color: "#4d6888" }}>— {r.name || "Anonymous"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+
+                      {/* General comments */}
+                      {sess.responses.filter(r => r.generalComment).length > 0 && (
+                        <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#7a9ab5", marginBottom: 4, textTransform: "uppercase" }}>General Comments</div>
+                          {sess.responses.filter(r => r.generalComment).map((r, i) => (
+                            <div key={i} style={{ fontSize: 13, color: "#d0d8e0", marginBottom: 4, lineHeight: 1.5 }}>
+                              "{r.generalComment}" <span style={{ fontSize: 11, color: "#4d6888" }}>— {r.name || "Anonymous"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })
+              )}
+            </>
+          );
+        })()}
+
         {/* ═══ TAB: BASELINE SCORECARD ═══ */}
         {tab === "baseline" && !isSubView && (() => {
           const totalScored = Object.keys(baselineScores).filter(k => baselineScores[k]?.mark > 0).length;
@@ -2534,7 +3217,7 @@ export default function ATDevelopmentTracker() {
           return (
             <>
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 16, color: "#5a7898", lineHeight: 1.55, marginBottom: 12 }}>
+                <div style={{ fontSize: 15, color: "#7a9ab5", lineHeight: 1.55, marginBottom: 12 }}>
                   One-time development snapshot. Score yourself on the Fitts & Posner 1–6 scale. Mentors (Chris, Gates, Mike) score independently — compare in the baseline conversation to agree on strengths, gaps, and first LOs.
                 </div>
 
@@ -2545,19 +3228,37 @@ export default function ATDevelopmentTracker() {
                   flexWrap: "wrap",
                 }}>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Scored</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#d0d8e0" }}>{totalScored}<span style={{ fontSize: 15, color: "#5a7898", fontWeight: 500 }}>/{totalGates}</span></div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Scored</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#d0d8e0" }}>{totalScored}<span style={{ fontSize: 14, color: "#7a9ab5", fontWeight: 500 }}>/{totalGates}</span></div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Avg Score</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: Number(avgScore) >= 4 ? "#28a858" : "#e07830" }}>{avgScore}</div>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Avg Score</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: Number(avgScore) >= 4 ? "#28a858" : "#e07830" }}>{avgScore}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>At or Above 4</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: "#28a858" }}>
+                    <div style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>At or Above 4</div>
+                    <div style={{ fontSize: 19, fontWeight: 800, color: "#28a858" }}>
                       {Object.values(baselineScores).filter(s => (s?.mark || 0) >= 4).length}
                     </div>
                   </div>
+                </div>
+
+                {/* Blind scoring toggle */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+                  padding: "8px 12px", borderRadius: 6,
+                  background: blindMode ? "rgba(138,112,184,0.08)" : "rgba(255,255,255,0.015)",
+                  border: `1px solid ${blindMode ? "rgba(138,112,184,0.25)" : "rgba(255,255,255,0.04)"}`,
+                }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flex: 1 }}>
+                    <input type="checkbox" checked={blindMode} onChange={() => setBlindMode(!blindMode)} style={{ accentColor: "#8a70b8" }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: blindMode ? "#a890d0" : "#7a9ab5" }}>
+                      Blind Scoring Mode
+                    </span>
+                  </label>
+                  <span style={{ fontSize: 11, color: "#4d6888" }}>
+                  {blindMode ? "Hidden until you score — tap 👁‍🗨 on any gate to peek" : "All scores visible"}
+                  </span>
                 </div>
 
                 {/* Fitts & Posner legend - compact */}
@@ -2567,10 +3268,10 @@ export default function ATDevelopmentTracker() {
                 }}>
                   {FITTS_POSNER.map(f => (
                     <span key={f.score} style={{
-                      fontSize: 13, fontWeight: 600, padding: "2px 6px", borderRadius: 3,
+                      fontSize: 12, fontWeight: 600, padding: "2px 6px", borderRadius: 3,
                       background: f.score >= 4 ? "rgba(40,168,88,0.08)" : "rgba(255,255,255,0.02)",
                       border: `1px solid ${f.score >= 4 ? "rgba(40,168,88,0.18)" : "rgba(255,255,255,0.04)"}`,
-                      color: f.score >= 4 ? "#28a858" : "#5a7898",
+                      color: f.score >= 4 ? "#28a858" : "#7a9ab5",
                     }}>
                       {f.score} {f.label}
                     </span>
@@ -2586,8 +3287,8 @@ export default function ATDevelopmentTracker() {
                       display: "flex", justifyContent: "space-between", alignItems: "baseline",
                       marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${mod.color}30`,
                     }}>
-                      <span style={{ fontSize: 17, fontWeight: 700, color: mod.color }}>{modName}</span>
-                      <span style={{ fontSize: 14, color: "#5a7898" }}>{modScored}/{mod.gates.length} scored</span>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: mod.color }}>{modName}</span>
+                      <span style={{ fontSize: 13, color: "#7a9ab5" }}>{modScored}/{mod.gates.length} scored</span>
                     </div>
 
                     {/* Column headers */}
@@ -2596,12 +3297,12 @@ export default function ATDevelopmentTracker() {
                       gap: 4, padding: "6px 8px", marginBottom: 2,
                       background: "rgba(255,255,255,0.02)", borderRadius: 6,
                     }}>
-                      <span style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textTransform: "uppercase" }}>Criterion</span>
-                      <span style={{ fontSize: 13, color: "#e8a050", fontWeight: 700, textAlign: "center" }}>Mark</span>
-                      <span style={{ fontSize: 13, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Chris</span>
-                      <span style={{ fontSize: 13, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Gates</span>
-                      <span style={{ fontSize: 13, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Mike</span>
-                      <span style={{ fontSize: 13, color: "#5a7898", fontWeight: 700, textAlign: "center" }}>💬</span>
+                      <span style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase" }}>Criterion</span>
+                      <span style={{ fontSize: 12, color: "#e8a050", fontWeight: 700, textAlign: "center" }}>Mark</span>
+                      <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Chris</span>
+                      <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Gates</span>
+                      <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>Mike</span>
+                      <span style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textAlign: "center" }}>💬</span>
                     </div>
 
                     {mod.gates.map((gate, gi) => {
@@ -2616,25 +3317,57 @@ export default function ATDevelopmentTracker() {
                         updateBaselineNote(gate.id, val);
                       };
 
-                      const scoreSelect = (who, value) => (
-                        <select
-                          value={value || ""}
-                          onChange={ev => updateScore(who, ev.target.value)}
-                          style={{
-                            width: "100%", padding: "4px 2px", fontSize: 16, fontWeight: 700,
-                            textAlign: "center", borderRadius: 4, cursor: "pointer",
-                            background: value >= 4 ? "rgba(40,168,88,0.12)" : value > 0 ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.03)",
-                            border: `1px solid ${value >= 4 ? "rgba(40,168,88,0.3)" : value > 0 ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.06)"}`,
-                            color: value >= 4 ? "#28a858" : value > 0 ? "#e07830" : "#4d6888",
-                            outline: "none", fontFamily: "inherit", appearance: "auto",
-                          }}
-                        >
-                          <option value="">—</option>
-                          {FITTS_POSNER.map(f => (
-                            <option key={f.score} value={f.score}>{f.score}</option>
-                          ))}
-                        </select>
-                      );
+                      // Column locking: each person can only edit their own column
+                      const canEdit = (who) => currentUser?.key === who;
+
+                      // Blind scoring: hide others' scores until you've scored this gate (or revealed it)
+                      const myKey = currentUser?.key;
+                      const myScore = scores[myKey] || 0;
+                      const gateRevealed = revealedGates[gate.id];
+                      const isBlind = (who) => blindMode && !gateRevealed && who !== myKey && myScore === 0;
+
+                      const scoreSelect = (who, value) => {
+                        if (isBlind(who)) {
+                          return (
+                            <div style={{
+                              width: "100%", padding: "4px 2px", fontSize: 15, fontWeight: 700,
+                              textAlign: "center", borderRadius: 4,
+                              background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                              color: "#3a5068",
+                            }}>?</div>
+                          );
+                        }
+                        if (!canEdit(who)) {
+                          return (
+                            <div style={{
+                              width: "100%", padding: "4px 2px", fontSize: 15, fontWeight: 700,
+                              textAlign: "center", borderRadius: 4,
+                              background: value >= 4 ? "rgba(40,168,88,0.12)" : value > 0 ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.03)",
+                              border: `1px solid ${value >= 4 ? "rgba(40,168,88,0.3)" : value > 0 ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.06)"}`,
+                              color: value >= 4 ? "#28a858" : value > 0 ? "#e07830" : "#4d6888",
+                            }}>{value || "—"}</div>
+                          );
+                        }
+                        return (
+                          <select
+                            value={value || ""}
+                            onChange={ev => updateScore(who, ev.target.value)}
+                            style={{
+                              width: "100%", padding: "4px 2px", fontSize: 15, fontWeight: 700,
+                              textAlign: "center", borderRadius: 4, cursor: "pointer",
+                              background: value >= 4 ? "rgba(40,168,88,0.12)" : value > 0 ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.03)",
+                              border: `1px solid ${value >= 4 ? "rgba(40,168,88,0.3)" : value > 0 ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.06)"}`,
+                              color: value >= 4 ? "#28a858" : value > 0 ? "#e07830" : "#4d6888",
+                              outline: "none", fontFamily: "inherit", appearance: "auto",
+                            }}
+                          >
+                            <option value="">—</option>
+                            {FITTS_POSNER.map(f => (
+                              <option key={f.score} value={f.score}>{f.score}</option>
+                            ))}
+                          </select>
+                        );
+                      };
 
                       return (
                         <div key={gate.id}>
@@ -2646,7 +3379,7 @@ export default function ATDevelopmentTracker() {
                               marginBottom: 2,
                             }}>
                               <span style={{
-                                fontSize: 13, fontWeight: 800, color: mod.color,
+                                fontSize: 12, fontWeight: 800, color: mod.color,
                                 textTransform: "uppercase", letterSpacing: "0.08em",
                               }}>
                                 {gate.category}
@@ -2660,8 +3393,16 @@ export default function ATDevelopmentTracker() {
                             borderRadius: 4,
                           }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                            <span style={{ fontSize: 14, fontWeight: 700, color: mod.color, flexShrink: 0 }}>{gate.id}</span>
-                            <span style={{ fontSize: 15, color: "#a0b0c0", lineHeight: 1.3 }}>{gate.criterion}</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: mod.color, flexShrink: 0 }}>{gate.id}</span>
+                            <span style={{ fontSize: 14, color: "#d0d8e0", lineHeight: 1.3, flex: 1 }}>{gate.criterion}</span>
+                            {blindMode && myScore === 0 && (
+                              <button onClick={() => setRevealedGates(p => ({ ...p, [gate.id]: !p[gate.id] }))} style={{
+                                background: "none", border: "none", cursor: "pointer", padding: "0 2px",
+                                fontSize: 12, color: gateRevealed ? "#a890d0" : "#3a5068", flexShrink: 0,
+                              }} title={gateRevealed ? "Hide others' scores" : "Reveal others' scores"}>
+                                {gateRevealed ? "👁" : "👁‍🗨"}
+                              </button>
+                            )}
                           </div>
                           {scoreSelect("mark", scores.mark)}
                           {scoreSelect("chris", scores.chris)}
@@ -2674,7 +3415,7 @@ export default function ATDevelopmentTracker() {
                               background: (baselineComments[gate.id] || []).length > 0 ? "rgba(40,168,88,0.1)" : "rgba(255,255,255,0.02)",
                               border: `1px solid ${(baselineComments[gate.id] || []).length > 0 ? "rgba(40,168,88,0.25)" : "rgba(255,255,255,0.06)"}`,
                               color: (baselineComments[gate.id] || []).length > 0 ? "#28a858" : "#4d6888",
-                              fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 2,
+                              fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 2,
                             }}
                           >
                             💬 {(baselineComments[gate.id] || []).length > 0 ? (baselineComments[gate.id] || []).length : ""}
@@ -2689,7 +3430,7 @@ export default function ATDevelopmentTracker() {
                             borderRadius: 8,
                           }}>
                             {(baselineComments[gate.id] || []).length === 0 && (
-                              <div style={{ fontSize: 14, color: "#4d6888", marginBottom: 10, fontStyle: "italic" }}>
+                              <div style={{ fontSize: 13, color: "#4d6888", marginBottom: 10, fontStyle: "italic" }}>
                                 No notes yet — add observations about this criterion.
                               </div>
                             )}
@@ -2706,16 +3447,16 @@ export default function ATDevelopmentTracker() {
                                     width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
                                     background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
                                     display: "flex", alignItems: "center", justifyContent: "center",
-                                    fontSize: 12, fontWeight: 800, color: commenter.color,
+                                    fontSize: 11, fontWeight: 800, color: commenter.color,
                                   }}>{commenter.name[0]}</div>
                                   <div style={{ flex: 1 }}>
                                     <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
-                                      <span style={{ fontSize: 14, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
-                                      <span style={{ fontSize: 12, color: "#4d6888" }}>
+                                      <span style={{ fontSize: 13, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                                      <span style={{ fontSize: 11, color: "#4d6888" }}>
                                         {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
                                       </span>
                                     </div>
-                                    <div style={{ fontSize: 15, color: "#b0bcc8", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
+                                    <div style={{ fontSize: 14, color: "#b0bcc8", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
                                   </div>
                                 </div>
                               );
@@ -2726,13 +3467,13 @@ export default function ATDevelopmentTracker() {
                                 background: `${currentUser?.color || "#7a9ab5"}20`,
                                 border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
                                 display: "flex", alignItems: "center", justifyContent: "center",
-                                fontSize: 12, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
+                                fontSize: 11, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
                               }}>{currentUser?.name?.[0] || "?"}</div>
                               <textarea
                                 id={`bl-comment-${gate.id}`}
                                 placeholder="Add a note about this criterion..."
                                 style={{
-                                  flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 14, color: "#c0ccd8",
+                                  flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#c0ccd8",
                                   background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
                                   borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
                                   lineHeight: 1.5, boxSizing: "border-box",
@@ -2760,13 +3501,13 @@ export default function ATDevelopmentTracker() {
                                 apiUpdate("GateStatus", { gateId: "_BASELINE_COMMENTS", leData: JSON.stringify(updated) });
                                 el.value = "";
                               }} style={{
-                                padding: "6px 12px", borderRadius: 5, fontSize: 14, fontWeight: 700,
+                                padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
                                 background: `${currentUser?.color || "#3088cc"}12`,
                                 border: `1px solid ${currentUser?.color || "#3088cc"}30`,
                                 color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
                               }}>Post</button>
                             </div>
-                            <div style={{ fontSize: 12, color: "#3a5068", marginTop: 3 }}>Ctrl+Enter to post</div>
+                            <div style={{ fontSize: 11, color: "#3a5068", marginTop: 3 }}>Ctrl+Enter to post</div>
                           </div>
                         )}
                         </div>
@@ -2778,36 +3519,131 @@ export default function ATDevelopmentTracker() {
 
               {/* Baseline Conversation Summary */}
               <Card style={{ marginTop: 10, borderLeft: "3px solid #e07830" }}>
-                <div style={{ fontSize: 17, fontWeight: 700, color: "#e8a050", marginBottom: 12 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#e8a050", marginBottom: 12 }}>
                   Baseline Conversation Summary
                 </div>
-                <div style={{ fontSize: 14, color: "#5a7898", marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                <div style={{ fontSize: 13, color: "#7a9ab5", marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
                   Top Strengths (agreed)
                 </div>
                 <textarea
                   value={baselineNotes._strengths || ""}
-                  onChange={e => setBaselineNotes(p => ({ ...p, _strengths: e.target.value }))}
+                  onChange={e => setBaselineNotes(p => ({ ...p, _strengths: e.target.value, _strengthsEditedBy: currentUser?.key, _strengthsEditedAt: new Date().toISOString() }))}
                   placeholder="Agreed strengths from the baseline conversation..."
-                  style={{ width: "100%", minHeight: 50, padding: "8px 10px", fontSize: 16, color: "#c0ccd8", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 12 }}
+                  style={{ width: "100%", minHeight: 50, padding: "8px 10px", fontSize: 15, color: "#c0ccd8", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 2 }}
                 />
-                <div style={{ fontSize: 14, color: "#5a7898", marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                {baselineNotes._strengthsEditedBy && (
+                  <div style={{ fontSize: 10, color: "#4d6888", marginBottom: 12 }}>
+                    Last edited by {(USERS[baselineNotes._strengthsEditedBy] || {}).name || baselineNotes._strengthsEditedBy}
+                    {baselineNotes._strengthsEditedAt ? ` · ${new Date(baselineNotes._strengthsEditedAt).toLocaleDateString("en", { month: "short", day: "numeric" })}` : ""}
+                  </div>
+                )}
+                {!baselineNotes._strengthsEditedBy && <div style={{ marginBottom: 12 }} />}
+                <div style={{ fontSize: 13, color: "#7a9ab5", marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
                   Top Development Priorities (agreed)
                 </div>
                 <textarea
                   value={baselineNotes._priorities || ""}
-                  onChange={e => setBaselineNotes(p => ({ ...p, _priorities: e.target.value }))}
+                  onChange={e => setBaselineNotes(p => ({ ...p, _priorities: e.target.value, _prioritiesEditedBy: currentUser?.key, _prioritiesEditedAt: new Date().toISOString() }))}
                   placeholder="Agreed development priorities..."
-                  style={{ width: "100%", minHeight: 50, padding: "8px 10px", fontSize: 16, color: "#c0ccd8", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 12 }}
+                  style={{ width: "100%", minHeight: 50, padding: "8px 10px", fontSize: 15, color: "#c0ccd8", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 2 }}
                 />
-                <div style={{ fontSize: 14, color: "#5a7898", marginBottom: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                {baselineNotes._prioritiesEditedBy && (
+                  <div style={{ fontSize: 10, color: "#4d6888", marginBottom: 12 }}>
+                    Last edited by {(USERS[baselineNotes._prioritiesEditedBy] || {}).name || baselineNotes._prioritiesEditedBy}
+                    {baselineNotes._prioritiesEditedAt ? ` · ${new Date(baselineNotes._prioritiesEditedAt).toLocaleDateString("en", { month: "short", day: "numeric" })}` : ""}
+                  </div>
+                )}
+                {!baselineNotes._prioritiesEditedBy && <div style={{ marginBottom: 12 }} />}
+                <div style={{ fontSize: 13, color: "#7a9ab5", marginBottom: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
                   Mentor Notes from Baseline Conversation
                 </div>
-                <textarea
-                  value={baselineNotes._mentorNotes || ""}
-                  onChange={e => setBaselineNotes(p => ({ ...p, _mentorNotes: e.target.value }))}
-                  placeholder="Chris / Gates / Mike notes..."
-                  style={{ width: "100%", minHeight: 50, padding: "8px 10px", fontSize: 16, color: "#c0ccd8", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box" }}
-                />
+
+                {/* Attributed comment thread */}
+                {(baselineNotes._mentorComments || []).length === 0 && (
+                  <div style={{ fontSize: 13, color: "#4d6888", marginBottom: 10, fontStyle: "italic" }}>
+                    No mentor notes yet — add observations from the baseline conversation.
+                  </div>
+                )}
+                {(baselineNotes._mentorComments || []).map((c, ci) => {
+                  const commenter = USERS[c.userId] || { name: c.userId, color: "#7a9ab5" };
+                  return (
+                    <div key={ci} style={{
+                      display: "flex", gap: 8, marginBottom: 8,
+                      padding: "8px 10px", borderRadius: 6,
+                      background: `${commenter.color}06`, border: `1px solid ${commenter.color}12`,
+                    }}>
+                      <div style={{
+                        width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
+                        background: `${commenter.color}20`, border: `1.5px solid ${commenter.color}40`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 11, fontWeight: 800, color: commenter.color,
+                      }}>{commenter.name[0]}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: commenter.color }}>{commenter.name}</span>
+                          <span style={{ fontSize: 11, color: "#4d6888" }}>
+                            {c.timestamp ? new Date(c.timestamp).toLocaleDateString("en", { month: "short", day: "numeric" }) : ""}
+                            {c.timestamp ? " · " + new Date(c.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 14, color: "#d0d8e0", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{c.text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                  <div style={{
+                    width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
+                    background: `${currentUser?.color || "#7a9ab5"}20`,
+                    border: `1.5px solid ${currentUser?.color || "#7a9ab5"}40`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 800, color: currentUser?.color || "#7a9ab5",
+                  }}>{currentUser?.name?.[0] || "?"}</div>
+                  <textarea
+                    id="bl-mentor-note-input"
+                    placeholder="Add a note from the baseline conversation..."
+                    style={{
+                      flex: 1, minHeight: 36, padding: "6px 10px", fontSize: 13, color: "#c0ccd8",
+                      background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
+                      borderRadius: 6, outline: "none", fontFamily: "inherit", resize: "vertical",
+                      lineHeight: 1.5, boxSizing: "border-box",
+                    }}
+                    onKeyDown={ev => {
+                      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+                        const el = document.getElementById("bl-mentor-note-input");
+                        const text = el.value.trim();
+                        if (!text) return;
+                        const newComments = [...(baselineNotes._mentorComments || []), { userId: currentUser?.key, text, timestamp: new Date().toISOString() }];
+                        setBaselineNotes(p => ({ ...p, _mentorComments: newComments }));
+                        saveGateToSheet("_baseline_summary");
+                        el.value = "";
+                      }
+                    }}
+                  />
+                  <button onClick={() => {
+                    const el = document.getElementById("bl-mentor-note-input");
+                    const text = el.value.trim();
+                    if (!text) return;
+                    const newComments = [...(baselineNotes._mentorComments || []), { userId: currentUser?.key, text, timestamp: new Date().toISOString() }];
+                    setBaselineNotes(p => ({ ...p, _mentorComments: newComments }));
+                    saveGateToSheet("_baseline_summary");
+                    el.value = "";
+                  }} style={{
+                    padding: "6px 12px", borderRadius: 5, fontSize: 13, fontWeight: 700,
+                    background: `${currentUser?.color || "#3088cc"}12`,
+                    border: `1px solid ${currentUser?.color || "#3088cc"}30`,
+                    color: currentUser?.color || "#3088cc", cursor: "pointer", flexShrink: 0,
+                  }}>Post</button>
+                </div>
+                <div style={{ fontSize: 10, color: "#3a5068", marginTop: 3 }}>Ctrl+Enter to post</div>
+
+                {/* Legacy notes (from old plain textarea) */}
+                {baselineNotes._mentorNotes && (
+                  <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.03)" }}>
+                    <div style={{ fontSize: 10, color: "#4d6888", fontWeight: 600, marginBottom: 3 }}>LEGACY NOTES</div>
+                    <div style={{ fontSize: 13, color: "#7a9ab5", whiteSpace: "pre-wrap" }}>{baselineNotes._mentorNotes}</div>
+                  </div>
+                )}
               </Card>
             </>
           );
@@ -2817,20 +3653,22 @@ export default function ATDevelopmentTracker() {
         {tab === "los" && !isSubView && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div style={{ fontSize: 16, color: "#5a7898" }}>
-                Mentor-defined objectives tied to assessment gates. Mentors: create LOs here — Mark tracks progress.
+              <div style={{ fontSize: 15, color: "#7a9ab5" }}>
+                Mentor-defined objectives tied to assessment gates.{currentUser?.role === "mentor" ? " Create LOs here — Mark tracks progress." : ""}
               </div>
-              <button onClick={newLO} style={{
-                padding: "7px 14px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.4)",
-                background: "rgba(224,120,48,0.1)", color: "#e8a050", fontSize: 15, fontWeight: 700, cursor: "pointer",
-                whiteSpace: "nowrap", flexShrink: 0, marginLeft: 10,
-              }}>+ Add LO</button>
+              {currentUser?.role === "mentor" && (
+                <button onClick={newLO} style={{
+                  padding: "7px 14px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.4)",
+                  background: "rgba(224,120,48,0.1)", color: "#e8a050", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                  whiteSpace: "nowrap", flexShrink: 0, marginLeft: 10,
+                }}>+ Add LO</button>
+              )}
             </div>
             {seasonLos.length === 0 ? (
               <div style={{ textAlign: "center", padding: "50px 20px", color: "#3a5068" }}>
-                <div style={{ fontSize: 36, marginBottom: 8, opacity: 0.4 }}>📋</div>
-                <div style={{ fontSize: 18, fontWeight: 600, color: "#5a7898" }}>No Learning Objectives yet</div>
-                <div style={{ fontSize: 16, color: "#3a5068", marginTop: 4 }}>Mentors: tap "+ Add LO" to assign Mark's first objective.</div>
+                <div style={{ fontSize: 35, marginBottom: 8, opacity: 0.4 }}>📋</div>
+                <div style={{ fontSize: 17, fontWeight: 600, color: "#7a9ab5" }}>No Learning Objectives yet</div>
+                <div style={{ fontSize: 15, color: "#4d6888", marginTop: 4 }}>Mentors: tap "+ Add LO" to assign Mark's first objective.</div>
               </div>
             ) : (
               seasonLos.map(lo => {
@@ -2842,12 +3680,12 @@ export default function ATDevelopmentTracker() {
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
-                            <span style={{ fontSize: 17, fontWeight: 700, color: mc }}>{lo.objId}</span>
+                            <span style={{ fontSize: 16, fontWeight: 700, color: mc }}>{lo.objId}</span>
                             <StatusBadge status={lo.status} />
-                            <span style={{ fontSize: 14, color: "#4d6888" }}>by {lo.assignedBy}</span>
-                            {entryCount > 0 && <span style={{ fontSize: 14, color: "#607898" }}>{entryCount} {entryCount === 1 ? "entry" : "entries"}</span>}
+                            <span style={{ fontSize: 13, color: "#4d6888" }}>by {lo.assignedBy}</span>
+                            {entryCount > 0 && <span style={{ fontSize: 13, color: "#607898" }}>{entryCount} {entryCount === 1 ? "entry" : "entries"}</span>}
                           </div>
-                          <div style={{ fontSize: 17, color: "#a0b0c0", lineHeight: 1.45, marginBottom: lo.gates.length > 0 ? 6 : 0 }}>
+                          <div style={{ fontSize: 16, color: "#d0d8e0", lineHeight: 1.45, marginBottom: lo.gates.length > 0 ? 6 : 0 }}>
                             {lo.objective || "Objective not yet defined"}
                           </div>
                           {lo.gates.length > 0 && (
@@ -2862,7 +3700,7 @@ export default function ATDevelopmentTracker() {
                             background: lo.score >= 4 ? "rgba(40,168,88,0.15)" : "rgba(224,120,48,0.12)",
                             border: `1.5px solid ${lo.score >= 4 ? "rgba(40,168,88,0.4)" : "rgba(224,120,48,0.3)"}`,
                             display: "flex", alignItems: "center", justifyContent: "center",
-                            fontSize: 17, fontWeight: 800, color: lo.score >= 4 ? "#28a858" : "#e07830",
+                            fontSize: 16, fontWeight: 800, color: lo.score >= 4 ? "#28a858" : "#e07830",
                           }}>
                             {lo.score}
                           </div>
@@ -2906,12 +3744,14 @@ export default function ATDevelopmentTracker() {
           return (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontSize: 16, color: "#5a7898" }}>Sessions linked to LOs — gates auto-derived.</div>
-              <button onClick={newEntry} style={{
-                padding: "7px 14px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.4)",
-                background: "rgba(224,120,48,0.1)", color: "#e8a050", fontSize: 15, fontWeight: 700, cursor: "pointer",
-                whiteSpace: "nowrap", flexShrink: 0,
-              }}>+ New Entry</button>
+              <div style={{ fontSize: 15, color: "#7a9ab5" }}>Sessions linked to LOs — gates auto-derived.</div>
+              {currentUser?.role === "candidate" && (
+                <button onClick={newEntry} style={{
+                  padding: "7px 14px", borderRadius: 6, border: "1px solid rgba(224,120,48,0.4)",
+                  background: "rgba(224,120,48,0.1)", color: "#e8a050", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                  whiteSpace: "nowrap", flexShrink: 0,
+                }}>+ New Entry</button>
+              )}
             </div>
 
             {/* Filter buttons */}
@@ -2926,10 +3766,10 @@ export default function ATDevelopmentTracker() {
                   key={f.id}
                   onClick={() => setDiaryFilter(f.id)}
                   style={{
-                    padding: "5px 11px", borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                    padding: "5px 11px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
                     border: diaryFilter === f.id ? `1.5px solid ${f.color}` : "1.5px solid rgba(255,255,255,0.06)",
                     background: diaryFilter === f.id ? `${f.color}15` : "rgba(255,255,255,0.015)",
-                    color: diaryFilter === f.id ? f.color : "#5a7898",
+                    color: diaryFilter === f.id ? f.color : "#7a9ab5",
                   }}
                 >
                   {f.label}
@@ -2939,10 +3779,10 @@ export default function ATDevelopmentTracker() {
 
             {filteredEntries.length === 0 ? (
               <div style={{ textAlign: "center", padding: "50px 20px", color: "#3a5068" }}>
-                <div style={{ fontSize: 36, marginBottom: 8, opacity: 0.4 }}>
+                <div style={{ fontSize: 35, marginBottom: 8, opacity: 0.4 }}>
                   {diaryFilter === "attention" ? "✅" : diaryFilter === "unread" ? "👀" : diaryFilter === "newcomments" ? "💬" : "⛷"}
                 </div>
-                <div style={{ fontSize: 18, fontWeight: 600, color: "#5a7898" }}>
+                <div style={{ fontSize: 17, fontWeight: 600, color: "#7a9ab5" }}>
                   {diaryFilter === "attention" ? "All caught up — no entries need your feedback"
                     : diaryFilter === "unread" ? "You've read everything"
                     : diaryFilter === "newcomments" ? "No new comments to review"
@@ -2950,7 +3790,7 @@ export default function ATDevelopmentTracker() {
                 </div>
                 {diaryFilter !== "all" && (
                   <button onClick={() => setDiaryFilter("all")} style={{
-                    marginTop: 12, padding: "6px 14px", borderRadius: 6, fontSize: 14, fontWeight: 600,
+                    marginTop: 12, padding: "6px 14px", borderRadius: 6, fontSize: 13, fontWeight: 600,
                     background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)",
                     color: "#6a8098", cursor: "pointer",
                   }}>Show all entries</button>
@@ -2978,20 +3818,20 @@ export default function ATDevelopmentTracker() {
                           width: 44, flexShrink: 0, textAlign: "center", padding: "5px 0",
                           borderRadius: 6, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.05)",
                         }}>
-                          <div style={{ fontSize: 20, fontWeight: 800, color: "#b0bcc8", lineHeight: 1 }}>
+                          <div style={{ fontSize: 19, fontWeight: 800, color: "#b0bcc8", lineHeight: 1 }}>
                             {new Date(e.date + "T12:00:00").getDate()}
                           </div>
-                          <div style={{ fontSize: 12, color: "#4d6888", fontWeight: 700, textTransform: "uppercase", marginTop: 1 }}>
+                          <div style={{ fontSize: 11, color: "#4d6888", fontWeight: 700, textTransform: "uppercase", marginTop: 1 }}>
                             {new Date(e.date + "T12:00:00").toLocaleString("en", { month: "short" })}
                           </div>
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginBottom: 3 }}>
-                            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 13, fontWeight: 700, background: fc.bg, border: `1px solid ${fc.border}`, color: fc.text }}>{e.flag}</span>
-                            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 13, fontWeight: 600, background: `${mc}12`, border: `1px solid ${mc}25`, color: mc }}>{e.moduleFocus}</span>
-                            {e.location && <span style={{ fontSize: 14, color: "#4d6888" }}>{e.location}</span>}
-                            {(e.attachments || []).length > 0 && <span style={{ fontSize: 13, color: "#3088cc" }}>📎 {e.attachments.length}</span>}
-                            {(e.comments || []).length > 0 && <span style={{ fontSize: 13, color: "#28a858" }}>💬 {e.comments.length}</span>}
+                            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 12, fontWeight: 700, background: fc.bg, border: `1px solid ${fc.border}`, color: fc.text }}>{e.flag}</span>
+                            <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: `${mc}12`, border: `1px solid ${mc}25`, color: mc }}>{e.moduleFocus}</span>
+                            {e.location && <span style={{ fontSize: 13, color: "#4d6888" }}>{e.location}</span>}
+                            {(e.attachments || []).length > 0 && <span style={{ fontSize: 12, color: "#3088cc" }}>📎 {e.attachments.length}</span>}
+                            {(e.comments || []).length > 0 && <span style={{ fontSize: 12, color: "#28a858" }}>💬 {e.comments.length}</span>}
                             {/* Read-by mini avatars */}
                             <span style={{ display: "inline-flex", gap: 2, marginLeft: 2 }}>
                               {["mark", "chris", "gates", "mike"].map(userId => {
@@ -3004,7 +3844,7 @@ export default function ATDevelopmentTracker() {
                                     width: 16, height: 16, borderRadius: "50%",
                                     background: `${user.color}20`, border: `1.5px solid ${user.color}50`,
                                     display: "inline-flex", alignItems: "center", justifyContent: "center",
-                                    fontSize: 9, fontWeight: 800, color: user.color,
+                                    fontSize: 8, fontWeight: 800, color: user.color,
                                   }}>
                                     {user.name[0]}
                                   </span>
@@ -3012,18 +3852,18 @@ export default function ATDevelopmentTracker() {
                               })}
                             </span>
                           </div>
-                          <div style={{ fontSize: 16, color: "#8898a8", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                          <div style={{ fontSize: 15, color: "#8898a8", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                             {e.workedOn || "No description"}
                           </div>
                           {(linkedLOs.length > 0 || derivedGates.length > 0) && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 5 }}>
                               {linkedLOs.map(lo => (
-                                <span key={lo.id} style={{ fontSize: 13, fontWeight: 700, color: MODULE_COLORS_SIMPLE[lo.module], padding: "1px 5px", borderRadius: 3, background: `${MODULE_COLORS_SIMPLE[lo.module]}12`, border: `1px solid ${MODULE_COLORS_SIMPLE[lo.module]}20` }}>
+                                <span key={lo.id} style={{ fontSize: 12, fontWeight: 700, color: MODULE_COLORS_SIMPLE[lo.module], padding: "1px 5px", borderRadius: 3, background: `${MODULE_COLORS_SIMPLE[lo.module]}12`, border: `1px solid ${MODULE_COLORS_SIMPLE[lo.module]}20` }}>
                                   {lo.objId}
                                 </span>
                               ))}
                               {derivedGates.slice(0, 5).map(g => <GateChip key={g} gateId={g} small />)}
-                              {derivedGates.length > 5 && <span style={{ fontSize: 13, color: "#4d6888", alignSelf: "center" }}>+{derivedGates.length - 5}</span>}
+                              {derivedGates.length > 5 && <span style={{ fontSize: 12, color: "#4d6888", alignSelf: "center" }}>+{derivedGates.length - 5}</span>}
                             </div>
                           )}
                         </div>
@@ -3040,9 +3880,27 @@ export default function ATDevelopmentTracker() {
         {/* ═══ TAB: GATE READINESS ═══ */}
         {tab === "gates" && !isSubView && (
           <>
-            <div style={{ fontSize: 16, color: "#5a7898", marginBottom: 16, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 15, color: "#7a9ab5", marginBottom: 16, lineHeight: 1.5 }}>
               Each gate is an exam readiness criterion. Gates light up as LOs develop them. A gate is ready when a mentor verifies the linked LO at 4+ (High Associative).
             </div>
+
+            {/* Blind scoring toggle */}
+            {currentUser?.role === "mentor" && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+                padding: "8px 12px", borderRadius: 6,
+                background: blindMode ? "rgba(138,112,184,0.08)" : "rgba(255,255,255,0.015)",
+                border: `1px solid ${blindMode ? "rgba(138,112,184,0.25)" : "rgba(255,255,255,0.04)"}`,
+              }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flex: 1 }}>
+                  <input type="checkbox" checked={blindMode} onChange={() => setBlindMode(!blindMode)} style={{ accentColor: "#8a70b8" }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: blindMode ? "#a890d0" : "#7a9ab5" }}>Blind Scoring</span>
+                </label>
+                <span style={{ fontSize: 11, color: "#4d6888" }}>
+                  {blindMode ? "Hidden until you score — tap 👁‍🗨 to peek" : "All scores visible"}
+                </span>
+              </div>
+            )}
 
             {/* Fitts & Posner Legend */}
             <div style={{
@@ -3051,7 +3909,7 @@ export default function ATDevelopmentTracker() {
             }}>
               {FITTS_POSNER.map(f => (
                 <span key={f.score} style={{
-                  fontSize: 13, fontWeight: 600, padding: "3px 7px", borderRadius: 4,
+                  fontSize: 12, fontWeight: 600, padding: "3px 7px", borderRadius: 4,
                   background: f.score >= 4 ? "rgba(40,168,88,0.08)" : "rgba(255,255,255,0.03)",
                   border: `1px solid ${f.score >= 4 ? "rgba(40,168,88,0.2)" : "rgba(255,255,255,0.05)"}`,
                   color: f.score >= 4 ? "#28a858" : "#607898",
@@ -3068,18 +3926,18 @@ export default function ATDevelopmentTracker() {
               flexWrap: "wrap",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <div style={{ width: 20, height: 16, borderRadius: 3, background: "rgba(40,168,88,0.12)", border: "1px solid rgba(40,168,88,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#28a858" }}>✓</div>
-                <span style={{ fontSize: 14, color: "#6a8098" }}>Best examiner score (gate passes at 4+)</span>
+                <div style={{ width: 20, height: 16, borderRadius: 3, background: "rgba(40,168,88,0.12)", border: "1px solid rgba(40,168,88,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#28a858" }}>✓</div>
+                <span style={{ fontSize: 13, color: "#6a8098" }}>Best examiner score (gate passes at 4+)</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <div style={{ width: 20, height: 16, borderRadius: 3, background: "rgba(180,80,40,0.06)", border: "1px dashed rgba(180,80,40,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#b45028" }}>2</div>
-                <span style={{ fontSize: 14, color: "#6a8098" }}>Baseline lowest (hover for breakdown)</span>
+                <div style={{ width: 20, height: 16, borderRadius: 3, background: "rgba(180,80,40,0.06)", border: "1px dashed rgba(180,80,40,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#b45028" }}>2</div>
+                <span style={{ fontSize: 13, color: "#6a8098" }}>Baseline lowest (hover for breakdown)</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#28a858" }}>C</span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#28a858" }}>G</span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: "#28a858" }}>M</span>
-                <span style={{ fontSize: 14, color: "#6a8098" }}>= Chris · Gates · Mike sign-off scores</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#28a858" }}>C</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#28a858" }}>G</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#28a858" }}>M</span>
+                <span style={{ fontSize: 13, color: "#6a8098" }}>= Chris · Gates · Mike sign-off scores</span>
               </div>
             </div>
 
@@ -3098,8 +3956,8 @@ export default function ATDevelopmentTracker() {
               return (
                 <div key={modName} style={{ marginBottom: 22 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                    <span style={{ fontSize: 17, fontWeight: 700, color: mod.color }}>{modName}</span>
-                    <span style={{ fontSize: 15, color: "#5a7898" }}>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: mod.color }}>{modName}</span>
+                    <span style={{ fontSize: 14, color: "#7a9ab5" }}>
                       <span style={{ color: "#28a858", fontWeight: 700 }}>{verifiedCount}</span> passed · <span style={{ color: "#e07830", fontWeight: 600 }}>{inProgressCount}</span> in progress · {mod.gates.length} total
                     </span>
                   </div>
@@ -3110,11 +3968,12 @@ export default function ATDevelopmentTracker() {
                   {/* Column headers */}
                   <div style={{
                     display: "grid", gridTemplateColumns: "28px 28px 1fr 38px 38px 38px",
-                    gap: 5, padding: "4px 10px", marginBottom: 2,
+                    gap: 5, padding: "6px 10px", marginBottom: 2,
+                    background: "rgba(255,255,255,0.02)", borderRadius: 6,
                   }}>
-                    <span style={{ fontSize: 12, color: "#5a7898", fontWeight: 700, textAlign: "center" }}>NOW</span>
-                    <span style={{ fontSize: 12, color: "#5a7898", fontWeight: 700, textAlign: "center" }}>BASE</span>
-                    <span style={{ fontSize: 12, color: "#5a7898", fontWeight: 700 }}>CRITERION</span>
+                    <span style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textAlign: "center" }}>NOW</span>
+                    <span style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textAlign: "center" }}>BASE</span>
+                    <span style={{ fontSize: 12, color: "#7a9ab5", fontWeight: 700, textTransform: "uppercase" }}>CRITERION</span>
                     <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>C</span>
                     <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>G</span>
                     <span style={{ fontSize: 12, color: "#28a858", fontWeight: 700, textAlign: "center" }}>M</span>
@@ -3145,25 +4004,57 @@ export default function ATDevelopmentTracker() {
                       updateGateExaminerScore(gate.id, who, val);
                     };
 
-                    const examinerSelect = (who, value) => (
-                      <select
-                        value={value || ""}
-                        onChange={ev => updateGateScore(who, ev.target.value)}
-                        style={{
-                          width: "100%", padding: "3px 1px", fontSize: 15, fontWeight: 700,
-                          textAlign: "center", borderRadius: 4, cursor: "pointer",
-                          background: value >= 4 ? "rgba(40,168,88,0.15)" : value > 0 ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.03)",
-                          border: `1px solid ${value >= 4 ? "rgba(40,168,88,0.35)" : value > 0 ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.06)"}`,
-                          color: value >= 4 ? "#28a858" : value > 0 ? "#e07830" : "#4d6888",
-                          outline: "none", fontFamily: "inherit", appearance: "auto",
-                        }}
-                      >
-                        <option value="">—</option>
-                        {FITTS_POSNER.map(f => (
-                          <option key={f.score} value={f.score}>{f.score}</option>
-                        ))}
-                      </select>
-                    );
+                    // Column locking: each mentor edits their own column only. Mark is view-only.
+                    const canEditGate = (who) => currentUser?.key === who && currentUser?.role === "mentor";
+
+                    // Blind scoring: hide others' scores until you've scored (or revealed this gate)
+                    const myGateKey = currentUser?.key;
+                    const myGateScore = gs[myGateKey] || 0;
+                    const gateRevealed = revealedGates[gate.id];
+                    const isGateBlind = (who) => blindMode && !gateRevealed && who !== myGateKey && currentUser?.role === "mentor" && myGateScore === 0;
+
+                    const examinerSelect = (who, value) => {
+                      if (isGateBlind(who)) {
+                        return (
+                          <div style={{
+                            width: "100%", padding: "4px 2px", fontSize: 14, fontWeight: 700,
+                            textAlign: "center", borderRadius: 4,
+                            background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+                            color: "#3a5068",
+                          }}>?</div>
+                        );
+                      }
+                      if (!canEditGate(who)) {
+                        return (
+                          <div style={{
+                            width: "100%", padding: "4px 2px", fontSize: 14, fontWeight: 700,
+                            textAlign: "center", borderRadius: 4,
+                            background: value >= 4 ? "rgba(40,168,88,0.12)" : value > 0 ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.03)",
+                            border: `1px solid ${value >= 4 ? "rgba(40,168,88,0.3)" : value > 0 ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.06)"}`,
+                            color: value >= 4 ? "#28a858" : value > 0 ? "#e07830" : "#4d6888",
+                          }}>{value || "—"}</div>
+                        );
+                      }
+                      return (
+                        <select
+                          value={value || ""}
+                          onChange={ev => updateGateScore(who, ev.target.value)}
+                          style={{
+                            width: "100%", padding: "4px 2px", fontSize: 14, fontWeight: 700,
+                            textAlign: "center", borderRadius: 4, cursor: "pointer",
+                            background: value >= 4 ? "rgba(40,168,88,0.12)" : value > 0 ? "rgba(224,120,48,0.1)" : "rgba(255,255,255,0.03)",
+                            border: `1px solid ${value >= 4 ? "rgba(40,168,88,0.3)" : value > 0 ? "rgba(224,120,48,0.2)" : "rgba(255,255,255,0.06)"}`,
+                            color: value >= 4 ? "#28a858" : value > 0 ? "#e07830" : "#4d6888",
+                            outline: "none", fontFamily: "inherit", appearance: "auto",
+                          }}
+                        >
+                          <option value="">—</option>
+                          {FITTS_POSNER.map(f => (
+                            <option key={f.score} value={f.score}>{f.score}</option>
+                          ))}
+                        </select>
+                      );
+                    };
 
                     return (
                       <div key={gate.id}>
@@ -3175,7 +4066,7 @@ export default function ATDevelopmentTracker() {
                             marginBottom: 4,
                           }}>
                             <span style={{
-                              fontSize: 14, fontWeight: 800, color: mod.color,
+                              fontSize: 13, fontWeight: 800, color: mod.color,
                               textTransform: "uppercase", letterSpacing: "0.08em",
                             }}>
                               {gate.category}
@@ -3184,8 +4075,9 @@ export default function ATDevelopmentTracker() {
                         )}
                         <div style={{
                           display: "grid", gridTemplateColumns: "28px 28px 1fr 38px 38px 38px",
-                          gap: 5, padding: "8px 10px", alignItems: "start",
-                          borderBottom: "1px solid rgba(255,255,255,0.025)",
+                          gap: 5, padding: "6px 10px", alignItems: "start",
+                          background: gi % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)",
+                          borderRadius: 4,
                           opacity: isPassed ? 0.65 : 1,
                         }}>
                         {/* Current best gate score */}
@@ -3194,8 +4086,8 @@ export default function ATDevelopmentTracker() {
                           background: isPassed ? "rgba(40,168,88,0.15)" : bestGateScore > 0 ? `${mod.color}12` : "rgba(255,255,255,0.02)",
                           border: `1px solid ${isPassed ? "rgba(40,168,88,0.35)" : bestGateScore > 0 ? `${mod.color}25` : "rgba(255,255,255,0.05)"}`,
                           display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 15, fontWeight: 800,
-                          color: isPassed ? "#28a858" : bestGateScore > 0 ? mod.color : "#3a5068",
+                          fontSize: 14, fontWeight: 800,
+                          color: isPassed ? "#28a858" : bestGateScore > 0 ? mod.color : "#4d6888",
                         }}>
                           {isPassed ? "✓" : bestGateScore > 0 ? bestGateScore : "—"}
                         </div>
@@ -3210,29 +4102,37 @@ export default function ATDevelopmentTracker() {
                               ? lowestBaseline >= 4 ? "rgba(40,168,88,0.3)" : "rgba(180,80,40,0.25)"
                               : "rgba(255,255,255,0.04)"}`,
                             display: "flex", alignItems: "center", justifyContent: "center",
-                            fontSize: 13, fontWeight: 700,
+                            fontSize: 12, fontWeight: 700,
                             color: hasBaseline
                               ? lowestBaseline >= 4 ? "#28a858" : "#b45028"
-                              : "#3a5068",
+                              : "#4d6888",
                           }}>
                           {hasBaseline ? lowestBaseline : "·"}
                         </div>
                         {/* Criterion + LO badges */}
                         <div>
                           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
-                            <span style={{ fontSize: 15, fontWeight: 700, color: mod.color }}>{gate.id}</span>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: mod.color }}>{gate.id}</span>
                             <span style={{
-                              fontSize: 16, color: isPassed ? "#6a8098" : hasLO ? "#a0b0c0" : "#4d6888",
-                              textDecoration: isPassed ? "line-through" : "none",
+                              fontSize: 14, color: isPassed ? "#6a8098" : "#d0d8e0",
+                              textDecoration: isPassed ? "line-through" : "none", flex: 1,
                             }}>
                               {gate.criterion}
                             </span>
+                            {blindMode && currentUser?.role === "mentor" && myGateScore === 0 && (
+                              <button onClick={() => setRevealedGates(p => ({ ...p, [gate.id]: !p[gate.id] }))} style={{
+                                background: "none", border: "none", cursor: "pointer", padding: "0 2px",
+                                fontSize: 12, color: gateRevealed ? "#a890d0" : "#3a5068", flexShrink: 0,
+                              }} title={gateRevealed ? "Hide others' scores" : "Reveal others' scores"}>
+                                {gateRevealed ? "👁" : "👁‍🗨"}
+                              </button>
+                            )}
                           </div>
                           {(hasLO || entryCount > 0) && (
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 3 }}>
                               {linkedLOs.map(lo => (
                                 <span key={lo.id} onClick={(ev) => { ev.stopPropagation(); setViewingLO(lo); }} style={{
-                                  fontSize: 13, fontWeight: 600, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
+                                  fontSize: 12, fontWeight: 600, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
                                   background: LO_STATUS_COLORS[lo.status].bg,
                                   border: `1px solid ${LO_STATUS_COLORS[lo.status].border}`,
                                   color: LO_STATUS_COLORS[lo.status].text,
@@ -3241,7 +4141,7 @@ export default function ATDevelopmentTracker() {
                                 </span>
                               ))}
                               {entryCount > 0 && (
-                                <span style={{ fontSize: 13, color: "#607898", alignSelf: "center" }}>
+                                <span style={{ fontSize: 12, color: "#607898", alignSelf: "center" }}>
                                   {entryCount} {entryCount === 1 ? "entry" : "entries"}
                                 </span>
                               )}
